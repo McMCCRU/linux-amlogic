@@ -181,9 +181,9 @@ void ana_ref_cntl0_bit9(bool on, unsigned int module_sel)
 			s_vdac_data->cpu_id == VDAC_CPU_TXLX)
 		vdac_hiu_reg_setb(HHI_VDAC_CNTL0, enable, 9, 1);
 	else if (s_vdac_data->cpu_id >= VDAC_CPU_G12AB)
-		vdac_hiu_reg_setb(HHI_VDAC_CNTL0_G12A, ~enable, 9, 1);
+		vdac_hiu_reg_setb(HHI_VDAC_CNTL0_G12A, !enable, 9, 1);
 	else
-		vdac_hiu_reg_setb(HHI_VDAC_CNTL0, ~enable, 9, 1);
+		vdac_hiu_reg_setb(HHI_VDAC_CNTL0, !enable, 9, 1);
 }
 EXPORT_SYMBOL(ana_ref_cntl0_bit9);
 
@@ -335,9 +335,9 @@ void vdac_out_cntl1_bit3(bool on, unsigned int module_sel)
 			s_vdac_data->cpu_id == VDAC_CPU_TXLX)
 		vdac_hiu_reg_setb(HHI_VDAC_CNTL1, enable, 3, 1);
 	else if (s_vdac_data->cpu_id >= VDAC_CPU_G12AB)
-		vdac_hiu_reg_setb(HHI_VDAC_CNTL1_G12A, ~enable, 3, 1);
+		vdac_hiu_reg_setb(HHI_VDAC_CNTL1_G12A, !enable, 3, 1);
 	else
-		vdac_hiu_reg_setb(HHI_VDAC_CNTL1, ~enable, 3, 1);
+		vdac_hiu_reg_setb(HHI_VDAC_CNTL1, !enable, 3, 1);
 }
 EXPORT_SYMBOL(vdac_out_cntl1_bit3);
 
