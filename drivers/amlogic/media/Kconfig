@@ -84,6 +84,7 @@ source "drivers/amlogic/media/common/Kconfig"
 endif
 
 if AMLOGIC_MEDIA_DRIVERS
+source "drivers/amlogic/media/frame_provider/Kconfig"
 source "drivers/amlogic/media/video_sink/Kconfig"
 source "drivers/amlogic/media/vout/Kconfig"
 source "drivers/amlogic/media/osd/Kconfig"

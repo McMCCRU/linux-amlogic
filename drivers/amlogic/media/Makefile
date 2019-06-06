@@ -1,5 +1,6 @@
 obj-$(CONFIG_AMLOGIC_MEDIA_COMMON)	+=	common/
 obj-$(CONFIG_AMLOGIC_MEDIA_VIDEO)	+=	frame_sync/
+obj-$(CONFIG_AMLOGIC_MEDIA_VIDEO)	+=	frame_sink/
 obj-$(CONFIG_AMLOGIC_MEDIA_VIDEO)	+=	video_sink/
 obj-$(CONFIG_AMLOGIC_MEDIA_FB)	+=	osd/
 obj-$(CONFIG_AMLOGIC_MEDIA_FB_EXT)	+=	osd_ext/
@@ -13,3 +14,6 @@ obj-$(CONFIG_AMLOGIC_MEDIA_GDC) += gdc/
 
 obj-$(CONFIG_AMLOGIC_MEDIA_ALGORITHM) += algorithm/
 obj-$(CONFIG_AMLOGIC_VIDEO_CAPTURE) += camera/
+obj-$(CONFIG_AMLOGIC_MEDIA_VIDEO) += amvdec_ports/
+obj-$(CONFIG_AMLOGIC_MEDIA_VIDEO) += stream_input/
+obj-$(CONFIG_AMLOGIC_MEDIA_VIDEO) += frame_provider/
