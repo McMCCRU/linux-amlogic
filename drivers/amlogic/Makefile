@@ -9,7 +9,7 @@
 
 #ifndef CONFIG_KASAN
 KBUILD_CFLAGS += -Wlarger-than=87569
-KBUILD_CFLAGS += -Wstack-usage=2018
+KBUILD_CFLAGS += -Wstack-usage=2018 -Wno-bool-operation -Wno-maybe-uninitialized
 #else
 #ifeq ($(call cc-ifversion, -lt, 0500, y), y)
 #    $(error -----GCC VERSION TOO SMALL FOR KASAN -----)

@@ -1,4 +1,4 @@
-obj-m	+=	 stream_input.o
+obj-y	+=	 stream_input.o
 
 stream_input-objs	+=	amports/amstream.o
 stream_input-objs	+=	amports/adec.o

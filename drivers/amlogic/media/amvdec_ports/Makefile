@@ -1,4 +1,4 @@
-obj-m += amvdec_ports.o
+obj-y += amvdec_ports.o
 amvdec_ports-objs += aml_vcodec_dec_drv.o
 amvdec_ports-objs += aml_vcodec_dec.o
 amvdec_ports-objs += aml_vcodec_dec_pm.o
