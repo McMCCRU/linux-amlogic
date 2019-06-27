@@ -226,7 +226,6 @@ dmx_write_reg(int r, u32 v)
 			return;
 		}
 	}
-
 	WRITE_MPEG_REG(r, v);
 }
 
@@ -309,13 +308,10 @@ static inline int _set(int v, int b) { return b; }
 
 static int dsc_set_csa_key(struct aml_dsc_channel *ch, int flags,
 			enum ca_cw_type type, u8 *key);
-static int dsc_set_aes_key(struct aml_dsc_channel *ch, int flags,
+static int dsc_set_aes_des_sm4_key(struct aml_dsc_channel *ch, int flags,
 			enum ca_cw_type type, u8 *key);
-
-static void aml_ci_plus_disable_output(void);
 static void aml_ci_plus_disable(void);
 static void am_ci_plus_set_output(struct aml_dsc_channel *ch);
-static void aml_ci_plus_enable(void);
 
 static void dmxn_op_chan(int dmx, int ch, int(*op)(int, int), int ch_op)
 {
@@ -439,6 +435,8 @@ static int dmx_timeout_set(struct aml_dmxtimeout *dto, int enable,
 /*Audio & Video PTS value*/
 static u32 video_pts;
 static u32 audio_pts;
+static u32 video_pts_bit32;
+static u32 audio_pts_bit32;
 static u32 first_video_pts;
 static u32 first_audio_pts;
 static int demux_skipbyte;
@@ -1311,6 +1309,8 @@ static irqreturn_t dmx_irq_handler(int irq_number, void *para)
 
 		if (pdts_status & (1 << VIDEO_PTS_READY)) {
 			video_pts = DMX_READ_REG(dmx->id, VIDEO_PTS_DEMUX);
+			video_pts_bit32 =
+				(status & (1 << VIDEO_PTS_BIT32)) ? 1 : 0;
 			if (!first_video_pts
 			    || 0 > (int)(video_pts - first_video_pts))
 				first_video_pts = video_pts;
@@ -1318,6 +1318,8 @@ static irqreturn_t dmx_irq_handler(int irq_number, void *para)
 
 		if (pdts_status & (1 << AUDIO_PTS_READY)) {
 			audio_pts = DMX_READ_REG(dmx->id, AUDIO_PTS_DEMUX);
+			audio_pts_bit32 =
+				(status & (1 << AUDIO_PTS_BIT32)) ? 1 : 0;
 			if (!first_audio_pts
 			    || 0 > (int)(audio_pts - first_audio_pts))
 				first_audio_pts = audio_pts;
@@ -1581,6 +1583,10 @@ static void stb_enable(struct aml_dvb *dvb)
 		fec_clk = tsfile_clkdiv;
 		hiu = 1;
 		break;
+	case AM_TS_SRC_HIU1:
+		fec_clk = tsfile_clkdiv;
+		hiu = 1;
+		break;
 	default:
 		fec_clk = 0;
 		hiu = 0;
@@ -1704,13 +1710,23 @@ static void stb_enable(struct aml_dvb *dvb)
 		data |= 1 << TS_OUT_CLK_INVERT;
 		WRITE_MPEG_REG(TS_TOP_CONFIG, data);
 	}
-	/* invert ts out clk  end */
-	WRITE_MPEG_REG(TS_FILE_CONFIG,
-		       (demux_skipbyte << 16) |
-		       (6 << DES_OUT_DLY) |
-		       (3 << TRANSPORT_SCRAMBLING_CONTROL_ODD) |
-		       (3 << TRANSPORT_SCRAMBLING_CONTROL_ODD_2) |
-		       (hiu << TS_HIU_ENABLE) | (fec_clk << FEC_FILE_CLK_DIV));
+
+	if (src == AM_TS_SRC_HIU1) {
+		WRITE_MPEG_REG(TS_HIU1_CONFIG,
+			       (demux_skipbyte << FILE_M2TS_SKIP_BYTES_HIU1) |
+			       (hiu << TS_HIU_ENABLE_HIU1) |
+			       (fec_clk << FEC_CLK_DIV_HIU1) |
+			       (0xBB << TS_PACKAGE_LENGTH_SUB_1_HIU1) |
+				   (0x47 << FEC_SYNC_BYTE_HIU1));
+	} else {
+		/* invert ts out clk  end */
+		WRITE_MPEG_REG(TS_FILE_CONFIG,
+			       (demux_skipbyte << 16) |
+			       (6 << DES_OUT_DLY) |
+			       (3 << TRANSPORT_SCRAMBLING_CONTROL_ODD) |
+			       (3 << TRANSPORT_SCRAMBLING_CONTROL_ODD_2) |
+			       (hiu << TS_HIU_ENABLE) | (fec_clk << FEC_FILE_CLK_DIV));
+	}
 }
 
 int dsc_set_pid(struct aml_dsc_channel *ch, int pid)
@@ -1751,41 +1767,103 @@ int dsc_set_key(struct aml_dsc_channel *ch, int flags, enum ca_cw_type type,
 	/*struct aml_dsc *dsc = ch->dsc;*/
 	int ret = -1;
 
-	if (type == CA_CW_DVB_CSA_EVEN || type == CA_CW_DVB_CSA_ODD) {
+	switch (type) {
+	case CA_CW_DVB_CSA_EVEN:
+	case CA_CW_DVB_CSA_ODD:
+		aml_ci_plus_disable();
 		ret = dsc_set_csa_key(ch, flags, type, key);
 		if (ret != 0)
 			goto END;
 		/* Different with old mode, do change */
 		if (ch->work_mode == CIPLUS_MODE || ch->work_mode == -1) {
 			if (ch->work_mode == -1)
-				pr_error("Dsc set output and enable\n");
+				pr_inf("dsc[%d:%d] enable\n",
+					ch->dsc->id, ch->id);
 			else
-				pr_error("Dsc set output change from ciplus\n");
-			aml_ci_plus_disable_output();
-			ch->aes_mode = AES_ECB_MODE;
-			/*aml_ci_plus_disable();*/
+				pr_inf("dsc[%d:%d] enable (from ciplus)\n",
+					ch->dsc->id, ch->id);
+			ch->mode = ECB_MODE;
 			ch->work_mode = DVBCSA_MODE;
 		}
-	} else if (type == CA_CW_AES_EVEN ||
-			type == CA_CW_AES_ODD ||
-			type == CA_CW_AES_EVEN_IV ||
-			type == CA_CW_AES_ODD_IV) {
-		ret = dsc_set_aes_key(ch, flags, type, key);
+		break;
+	case CA_CW_AES_EVEN:
+	case CA_CW_AES_ODD:
+	case CA_CW_AES_EVEN_IV:
+	case CA_CW_AES_ODD_IV:
+	case CA_CW_DES_EVEN:
+	case CA_CW_DES_ODD:
+	case CA_CW_SM4_EVEN:
+	case CA_CW_SM4_ODD:
+	case CA_CW_SM4_EVEN_IV:
+	case CA_CW_SM4_ODD_IV:
+		am_ci_plus_set_output(ch);
+		ret = dsc_set_aes_des_sm4_key(ch, flags, type, key);
 		if (ret != 0)
 			goto END;
 		/* Different with old mode, do change */
 		if (ch->work_mode == DVBCSA_MODE || ch->work_mode == -1) {
 			if (ch->work_mode == -1)
-				pr_error("Ciplus set output and enable\n");
+				pr_inf("dsc[%d:%d] ciplus enable\n",
+					ch->dsc->id, ch->id);
 			else
-				pr_error("Ciplus set output change from dsc\n");
-			am_ci_plus_set_output(ch);
-			aml_ci_plus_enable();
+				pr_inf("dsc[%d:%d] ciplus enable (from dsc)\n",
+					ch->dsc->id, ch->id);
 			ch->work_mode = CIPLUS_MODE;
 		}
+		break;
+	default:
+		break;
 	}
 END:
 	return ret;
+}
+
+int dsc_set_keys(struct aml_dsc_channel *ch)
+{
+	int types = ch->set & 0xFFFFFF;
+	int flag = (ch->set >> 24) & 0xFF;
+	int i;
+	u8  *k;
+	int ret = 0;
+
+	for (i = 0; i < CA_CW_TYPE_MAX; i++) {
+		if (types & (1 << i)) {
+			k = NULL;
+			switch (i) {
+			case CA_CW_DVB_CSA_EVEN:
+			case CA_CW_AES_EVEN:
+			case CA_CW_DES_EVEN:
+			case CA_CW_SM4_EVEN:
+				k = ch->even;
+				break;
+			case CA_CW_DVB_CSA_ODD:
+			case CA_CW_AES_ODD:
+			case CA_CW_DES_ODD:
+			case CA_CW_SM4_ODD:
+				k = ch->odd;
+				break;
+			case CA_CW_AES_EVEN_IV:
+			case CA_CW_SM4_EVEN_IV:
+				k = ch->even_iv;
+				break;
+			case CA_CW_AES_ODD_IV:
+			case CA_CW_SM4_ODD_IV:
+				k = ch->odd_iv;
+				break;
+			default:
+				break;
+			}
+			/*
+			if (k)
+				pr_inf("dsc ch:%d flag:%d type:%d\n", ch->id, flag, i);
+			*/
+			if (k)
+				ret = dsc_set_key(ch, flag,
+					i,
+					k);
+		}
+	}
+	return 0;
 }
 
 static int dsc_set_csa_key(struct aml_dsc_channel *ch, int flags,
@@ -1795,18 +1873,10 @@ static int dsc_set_csa_key(struct aml_dsc_channel *ch, int flags,
 	int is_dsc2 = (dsc->id == 1) ? 1 : 0;
 	u16 k0, k1, k2, k3;
 	u32 key0, key1;
-	int reg; /*not sure if reg readable*/
-/*	u32 data;
- *	u32 pid = 0x1fff;
- */
-	int from_kl = flags & CA_CW_FROM_KL;
-/*  int pid = ch->pid; */
+	int reg;
 
-	if (from_kl) {
+	if (flags & DSC_FROM_KL) {
 		k0 = k1 = k2 = k3 = 0;
-/*		ch->used = 1;
- *		dsc_set_pid(ch, pid);
- */
 		/*dummy write to check if kl not working*/
 		key0 = key1 = 0;
 		WRITE_MPEG_REG(COMM_DESC_KEY0, key0);
@@ -1841,9 +1911,9 @@ static int dsc_set_csa_key(struct aml_dsc_channel *ch, int flags,
 		key1 = (k2 << 16) | k3;
 		WRITE_MPEG_REG(COMM_DESC_KEY0, key0);
 		WRITE_MPEG_REG(COMM_DESC_KEY1, key1);
-		WRITE_MPEG_REG(COMM_DESC_KEY_RW,
-				(ch->id + type * DSC_COUNT)+(is_dsc2 ? 16 : 0));
+
 		reg = (ch->id + type * DSC_COUNT)+(is_dsc2 ? 16 : 0);
+		WRITE_MPEG_REG(COMM_DESC_KEY_RW, reg);
 	}
 
 	return 0;
@@ -1868,7 +1938,11 @@ static int dsc_set_csa_key(struct aml_dsc_channel *ch, int flags,
 #define KEY_WR_AES_IV_A 4
 #define KEY_WR_AES_B    3
 #define KEY_WR_AES_A    2
+#define KEY_WR_DES_B    1
+#define KEY_WR_DES_A    0
 
+#define IDSA_MODE_BIT	31
+#define SM4_MODE		30
 #define CNTL_ENABLE     3
 #define AES_CBC_DISABLE 2
 #define AES_EN          1
@@ -1877,7 +1951,13 @@ static int dsc_set_csa_key(struct aml_dsc_channel *ch, int flags,
 #define AES_MSG_OUT_ENDIAN 24
 #define AES_MSG_IN_ENDIAN  20
 #define AES_KEY_ENDIAN  16
+#define DES_MSG_OUT_ENDIAN 8
+#define DES_MSG_IN_ENDIAN  4
+#define DES_KEY_ENDIAN  0
 
+#define ALGO_AES		0
+#define ALGO_SM4		1
+#define ALGO_DES		2
 
 #if 0
 static void aml_ci_plus_set_stb(void)
@@ -1924,14 +2004,16 @@ void aml_ci_plus_set_iv(struct aml_dsc_channel *ch, enum ca_cw_type type,
 	k1 = (key[8] << 24) | (key[9] << 16) | (key[10] << 8) | key[11];
 	k0 = (key[12] << 24) | (key[13] << 16) | (key[14] << 8) | key[15];
 
-	if (type == CA_CW_AES_EVEN_IV) {
+	if (type == CA_CW_AES_EVEN_IV ||
+		type == CA_CW_SM4_EVEN_IV) {
 		WRITE_MPEG_REG(CIPLUS_KEY0, k0);
 		WRITE_MPEG_REG(CIPLUS_KEY1, k1);
 		WRITE_MPEG_REG(CIPLUS_KEY2, k2);
 		WRITE_MPEG_REG(CIPLUS_KEY3, k3);
 		WRITE_MPEG_REG(CIPLUS_KEY_WR,
 			(ch->id << 9) | (1<<KEY_WR_AES_IV_A));
-	} else if (type == CA_CW_AES_ODD_IV) {
+	} else if (type == CA_CW_AES_ODD_IV ||
+			   type == CA_CW_SM4_ODD_IV) {
 		WRITE_MPEG_REG(CIPLUS_KEY0, k0);
 		WRITE_MPEG_REG(CIPLUS_KEY1, k1);
 		WRITE_MPEG_REG(CIPLUS_KEY2, k2);
@@ -1945,26 +2027,70 @@ void aml_ci_plus_set_iv(struct aml_dsc_channel *ch, enum ca_cw_type type,
  * Param:
  * key_endian
  *	S905D  7 for kl    0 for set key directly
- * aes_mode
+ * mode
  *  0 for ebc
  *  1 for cbc
  */
-static void aml_ci_plus_config(int key_endian, int aes_mode)
+static void aml_ci_plus_config(int key_endian, int mode, int algo)
 {
 	unsigned int data;
+	unsigned int idsa_mode = 0;
+	unsigned int sm4_mode = 0;
+	unsigned int cbc_disable = 0;
+	unsigned int des_enable = 0;
+	unsigned int aes_enable = 1;
 
-	WRITE_MPEG_REG(CIPLUS_ENDIAN, (15 << AES_MSG_OUT_ENDIAN) |
-				(15 << AES_MSG_IN_ENDIAN) |
-				(key_endian << AES_KEY_ENDIAN));
+	pr_dbg("%s mode:%d,alog:%d\n",__FUNCTION__,mode,algo);
+
+	if (get_cpu_type() < MESON_CPU_MAJOR_ID_SM1) {
+		WRITE_MPEG_REG(CIPLUS_ENDIAN,
+				(15 << AES_MSG_OUT_ENDIAN)
+				| (15 << AES_MSG_IN_ENDIAN)
+				| (key_endian << AES_KEY_ENDIAN)
+				|
+				(15 << DES_MSG_OUT_ENDIAN)
+				| (15 << DES_MSG_IN_ENDIAN)
+				| (key_endian << DES_KEY_ENDIAN)
+				);
+	} else {
+		WRITE_MPEG_REG(CIPLUS_ENDIAN, 0);
+	}
+
 	data = READ_MPEG_REG(CIPLUS_ENDIAN);
-	WRITE_MPEG_REG(CIPLUS_CONFIG, (1 << CNTL_ENABLE) |
-				(aes_mode << AES_CBC_DISABLE) |
-					/*1 << AES_CBC_DISABLE     : ECB
-					 *0 << AES_CBC_DISABLE     : CBC
-					 */
-				(1 << AES_EN));
-	data = READ_MPEG_REG(DEMUX_CONTROL);
 
+	if (algo == ALGO_SM4) {
+		sm4_mode = 1;
+	} else if (algo ==  ALGO_AES){
+		sm4_mode = 0;
+	} else {
+		sm4_mode = 0;
+		des_enable = 1;
+	}
+
+	if (mode == IDSA_MODE) {
+		idsa_mode = 1;
+		cbc_disable = 0;
+	} else if (mode == CBC_MODE) {
+		cbc_disable = 0;
+	} else {
+		cbc_disable = 1;
+	}
+	pr_dbg("idsa_mode:%d sm4_mode:%d cbc_disable:%d aes_enable:%d des_enable:%d\n", \
+		idsa_mode,sm4_mode,cbc_disable,aes_enable,des_enable);
+
+	data =  (idsa_mode << IDSA_MODE_BIT) |
+			(sm4_mode << SM4_MODE ) |
+			(cbc_disable << AES_CBC_DISABLE) |
+			/*1 << AES_CBC_DISABLE     : ECB
+			 *0 << AES_CBC_DISABLE     : CBC
+			 */
+			(1 << CNTL_ENABLE) |
+			(aes_enable << AES_EN) |
+			(des_enable << DES_EN);
+
+	WRITE_MPEG_REG(CIPLUS_CONFIG, data);
+	data = READ_MPEG_REG(CIPLUS_CONFIG);
+	pr_dbg("CIPLUS_CONFIG is 0x%x\n",data);
 }
 
 /*
@@ -1974,42 +2100,69 @@ static void am_ci_plus_set_output(struct aml_dsc_channel *ch)
 {
 	struct aml_dsc *dsc = ch->dsc;
 	u32 data;
+	u32 in = 0, out = 0;
+	int set = 0;
 
 	if (dsc->id != 0) {
 		pr_error("Ciplus set output can only work at dsc0 device\n");
 		return;
 	}
 
+	switch (dsc->source) {
+	case  AM_TS_SRC_DMX0:
+		in = 0;
+		break;
+	case  AM_TS_SRC_DMX1:
+		in = 1;
+		break;
+	case  AM_TS_SRC_DMX2:
+		in = 2;
+		break;
+	default:
+		break;
+	}
+
 	if (ciplus_out_auto_mode == 1) {
-		data = READ_MPEG_REG(STB_TOP_CONFIG);
-		switch (dsc->source) {
+		switch (dsc->dst) {
 		case  AM_TS_SRC_DMX0:
-			data |= 1 << CIPLUS_OUT_SEL;
-			ciplus_out_sel = 1;
-		break;
+			out = 1;
+			break;
 		case  AM_TS_SRC_DMX1:
-			data |= 2 << CIPLUS_OUT_SEL;
-			ciplus_out_sel = 2;
-		break;
+			out = 2;
+			break;
 		case  AM_TS_SRC_DMX2:
-			data |= 4 << CIPLUS_OUT_SEL;
-			ciplus_out_sel = 4;
-		break;
+			out = 4;
+			break;
 		default:
-			pr_error("ciplus auto set source failed\n");
-			return;
+			break;
 		}
-		WRITE_MPEG_REG(STB_TOP_CONFIG, data);
+		set = 1;
+		ciplus_out_sel = out;
 	} else if (ciplus_out_sel >= 0 && ciplus_out_sel <= 7) {
-		pr_error("Set output selection %d\n", ciplus_out_sel);
+		set = 1;
+		out = ciplus_out_sel;
+	} else {
+		pr_error("dsc ciplus out config is invalid\n");
+	}
+
+	if (set) {
+		/* Set ciplus input source ,
+		 * output set 0 means no output. ---> need confirm.
+		 * if output set 0 still affects dsc output, we need to disable
+		 * ciplus module.
+		 */
 		data = READ_MPEG_REG(STB_TOP_CONFIG);
+		data &= ~(3<<CIPLUS_IN_SEL);
+		data |= in << CIPLUS_IN_SEL;
 		data &= ~(7<<CIPLUS_OUT_SEL);
-		WRITE_MPEG_REG(STB_TOP_CONFIG, data |
-			(ciplus_out_sel << CIPLUS_OUT_SEL));
-	} else
-		pr_error("Ciplus out config is invalid\n");
+		data |= out << CIPLUS_OUT_SEL;
+		WRITE_MPEG_REG(STB_TOP_CONFIG, data);
+		pr_inf("dsc ciplus in[%x] out[%x] %s\n", in, out,
+			(ciplus_out_auto_mode) ? "" : "force");
+	}
 }
 
+#if 0
 /*
  * Ciplus output has high priority,
  * disable it's output will let dsc output go.
@@ -2029,8 +2182,11 @@ static void aml_ci_plus_enable(void)
 
 	data = READ_MPEG_REG(STB_TOP_CONFIG);
 	WRITE_MPEG_REG(CIPLUS_CONFIG,
-			(1 << CNTL_ENABLE) | (1 << AES_EN));
+			(1 << CNTL_ENABLE)
+			| (1 << AES_EN)
+			| (1 << DES_EN));
 }
+#endif
 
 static void aml_ci_plus_disable(void)
 {
@@ -2041,93 +2197,135 @@ static void aml_ci_plus_disable(void)
 	data = READ_MPEG_REG(STB_TOP_CONFIG);
 	WRITE_MPEG_REG(STB_TOP_CONFIG, data &
 			~((1 << CIPLUS_IN_SEL) | (7 << CIPLUS_OUT_SEL)));
-/*	WRITE_MPEG_REG(CIPLUS_CONFIG,
- *			(0 << CNTL_ENABLE) | (0 << AES_EN));
- */
 }
 
-static int dsc_set_aes_key(struct aml_dsc_channel *ch, int flags,
+static int dsc_set_aes_des_sm4_key(struct aml_dsc_channel *ch, int flags,
 			enum ca_cw_type type, u8 *key)
 {
-	unsigned int k0, k1, k2, k3, index_flag = 0;
+	unsigned int k0, k1, k2, k3;
+	int iv = 0, aes = 0, des = 0;
+	int ab_iv = 0, ab_aes = 0, ab_des = 0;
 	int from_kl = flags & CA_CW_FROM_KL;
-	int aes_a = 0, aes_b = 0;
+	int algo = 0;
 
-	/* Set odd/even */
-	if (type == CA_CW_AES_EVEN) {
-		aes_a = 0;
-		aes_b = 1;
-		if (ch->aes_mode == -1)
-			ch->aes_mode = AES_ECB_MODE;
-	} else if (type == CA_CW_AES_ODD) {
-		aes_a = 1;
-		aes_b = 0;
-		if (ch->aes_mode == -1)
-			ch->aes_mode = AES_ECB_MODE;
-	} else if ((type == CA_CW_AES_EVEN_IV)
-		|| (type == CA_CW_AES_ODD_IV)) {
-		aml_ci_plus_set_iv(ch, type, key);
-		ch->aes_mode = AES_CBC_MODE;
-		return 0;
+	if (!from_kl) {
+		if (get_cpu_type() < MESON_CPU_MAJOR_ID_SM1) {
+		k3 = (key[0] << 24) | (key[1] << 16) | (key[2] << 8) | key[3];
+		k2 = (key[4] << 24) | (key[5] << 16) | (key[6] << 8) | key[7];
+		k1 = (key[8] << 24) | (key[9] << 16) | (key[10] << 8) | key[11];
+		k0 = (key[12] << 24) | (key[13] << 16)
+			| (key[14] << 8) | key[15];
+		} else {
+		k0 = (key[0]) | (key[1] << 8) | (key[2] << 16) | (key[3] << 24);
+		k1 = (key[4]) | (key[5] << 8) | (key[6] << 16) | (key[7] << 24);
+		k2 = (key[8]) | (key[9] << 8) | (key[10] << 16)| (key[11] << 24);
+		k3 = (key[12])| (key[13] << 8)| (key[14] << 16)| (key[15] << 24);
+		}
+	} else
+		k0 = k1 = k2 = k3 = 0;
+
+	switch (type) {
+	case CA_CW_AES_EVEN:
+	case CA_CW_SM4_EVEN:
+		ab_aes = (from_kl) ? 0x2 : 0x1;
+		if (ch->mode == -1)
+			ch->mode = ECB_MODE;
+		aes = 1;
+		if (type == CA_CW_AES_EVEN)
+			algo = ALGO_AES;
+		else
+			algo = ALGO_SM4;
+		break;
+	case CA_CW_AES_ODD:
+	case CA_CW_SM4_ODD:
+		ab_aes = (from_kl) ? 0x1 : 0x2;
+		if (ch->mode == -1)
+			ch->mode = ECB_MODE;
+		aes = 1;
+		if (type == CA_CW_AES_ODD)
+			algo = ALGO_AES;
+		else
+			algo = ALGO_SM4;
+		break;
+	case CA_CW_AES_EVEN_IV:
+	case CA_CW_SM4_EVEN_IV:
+		ab_iv = 0x1;
+		if (ch->mode == -1)
+			ch->mode = CBC_MODE;
+		iv = 1;
+		if (type == CA_CW_AES_EVEN_IV)
+			algo = ALGO_AES;
+		else
+			algo = ALGO_SM4;
+		break;
+	case CA_CW_AES_ODD_IV:
+	case CA_CW_SM4_ODD_IV:
+		ab_iv = 0x2;
+		if (ch->mode == -1)
+			ch->mode = CBC_MODE;
+		iv = 1;
+		if (type == CA_CW_AES_ODD_IV)
+			algo = ALGO_AES;
+		else
+			algo = ALGO_SM4;
+		break;
+	case CA_CW_DES_EVEN:
+		ab_des = 0x1;
+		ch->mode = ECB_MODE;
+		des = 1;
+		algo = ALGO_DES;
+		break;
+	case CA_CW_DES_ODD:
+		ab_des = 0x2;
+		ch->mode = ECB_MODE;
+		algo = ALGO_DES;
+		des = 1;
+		break;
+	default:
+		break;
 	}
 
 	/* Set endian and cbc/ecb mode */
 	if (from_kl)
-		aml_ci_plus_config(7, ch->aes_mode);
+		aml_ci_plus_config(7, ch->mode, algo);
 	else
-		aml_ci_plus_config(0, ch->aes_mode);
+		aml_ci_plus_config(0, ch->mode, algo);
 
 	/* Write keys to work */
-	if (from_kl) {
-		k0 = k1 = k2 = k3 = 0;
-
-/* dummy write to
- *					check if kl not working
- */
+	if (iv || aes) {
 		WRITE_MPEG_REG(CIPLUS_KEY0, k0);
 		WRITE_MPEG_REG(CIPLUS_KEY1, k1);
 		WRITE_MPEG_REG(CIPLUS_KEY2, k2);
 		WRITE_MPEG_REG(CIPLUS_KEY3, k3);
-		WRITE_MPEG_REG(CIPLUS_KEY_WR,
-		(ch->id << 9) |
-
-/*  bit[11:9] the key of index,
- *						   need match PID index
- */
-		(0 << 8) |        /* bit[8] des key use cw[127:64]*/
-		(0 << 7) |        /* bit[7] aes iv use cw*/
-		(1 << 6) |        /* bit[6] aes/des key use cw*/
-		(0 << 5) |        /* bit[5] write AES IV B value*/
-		(0 << 4) |        /* bit[4] write AES IV A value*/
-		(aes_b << 3) |        /* bit[3] write AES B key*/
-		(aes_a << 2) |        /* bit[2] write AES A key*/
-		(0 << 1) |        /* bit[1] write DES B key*/
-		(0));             /* bit[0] write DES A key*/
-	} else {
-
-		k3 = (key[0] << 24) | (key[1] << 16) | (key[2] << 8) | key[3];
-		k2 = (key[4] << 24) | (key[5] << 16) | (key[6] << 8) | key[7];
-		k1 = (key[8] << 24) | (key[9] << 16) |
-			(key[10] << 8) | key[11];
-		k0 = (key[12] << 24) | (key[13] << 16) |
-			(key[14] << 8) | key[15];
-
-		WRITE_MPEG_REG(CIPLUS_KEY0, k0);
-		WRITE_MPEG_REG(CIPLUS_KEY1, k1);
-		WRITE_MPEG_REG(CIPLUS_KEY2, k2);
-		WRITE_MPEG_REG(CIPLUS_KEY3, k3);
-		index_flag = (ch->id << 9);
-		if (type == 2) { /* even */
-			WRITE_MPEG_REG(CIPLUS_KEY_WR,
-				index_flag | (1<<KEY_WR_AES_A));
-		} else if (type == 3) { /* odd */
-			WRITE_MPEG_REG(CIPLUS_KEY_WR,
-				index_flag | (1<<KEY_WR_AES_B));
-		}
+	} else {/*des*/
+		WRITE_MPEG_REG(CIPLUS_KEY0, k2);
+		WRITE_MPEG_REG(CIPLUS_KEY1, k3);
+		WRITE_MPEG_REG(CIPLUS_KEY2, 0);
+		WRITE_MPEG_REG(CIPLUS_KEY3, 0);
 	}
+	WRITE_MPEG_REG(CIPLUS_KEY_WR,
+		(ch->id << 9) |
+				/* bit[11:9] the key of index,
+					need match PID index*/
+		((from_kl && des) ? (1 << 8) : 0) |
+				/* bit[8] des key use cw[127:64]*/
+		(0 << 7) |      /* bit[7] aes iv use cw*/
+		((from_kl && (aes || des)) ? (1 << 6) : 0) |
+				/* bit[6] aes/des key use cw*/
+				/* bit[5] write AES IV B value*/
+		(ab_iv << 4) |  /* bit[4] write AES IV A value*/
+				/* bit[3] write AES B key*/
+		(ab_aes << 2) | /* bit[2] write AES A key*/
+				/* bit[1] write DES B key*/
+		(ab_des));      /* bit[0] write DES A key*/
+
+	/*
+	pr_inf("k:%08x:%08x:%08x:%08x kl:%d aes:%d des:%d ab_iv:%d ab_aes:%d ab_des:%d id:%d mod:%d\n",
+		k0, k1, k2, k3,
+		from_kl, aes, des, ab_iv, ab_aes, ab_des, ch->id, ch->aes_mode);
+	*/
 	return 0;
 }
-
 
 void dsc_release(void)
 {
@@ -2144,7 +2342,7 @@ int dsc_enable(struct aml_dsc *dsc, int enable)
 				(1 << ENABLE_DES_PL)|
 				(1 << ENABLE_DES_PL_CLK)));
 	} else if (dsc->id == 1) {
-		WRITE_MPEG_REG(COMM_DESC_2_CTL,	0);
+		WRITE_MPEG_REG(COMM_DESC_2_CTL, 0);
 	}
 	return 0;
 }
@@ -2706,6 +2904,29 @@ find_done:
 	return record_flag;
 }
 
+static void dmx_cascade_set(int cur_dmx, int source) {
+	int fec_sel_demux = 0;
+	int data;
+
+	switch (source) {
+		case AM_TS_SRC_DMX0:
+		case AM_TS_SRC_DMX1:
+		case AM_TS_SRC_DMX2:
+			fec_sel_demux = source -AM_TS_SRC_DMX0;
+			break;
+		default:
+			fec_sel_demux = cur_dmx;
+			break;
+	}
+
+	data = READ_MPEG_REG(TS_TOP_CONFIG1);
+	data &= ~(0x3 << (cur_dmx*2));
+	data |= (fec_sel_demux << (cur_dmx*2));
+	WRITE_MPEG_REG(TS_TOP_CONFIG1,data);
+
+	pr_dbg("%s id:%d, source:%d data:0x%0x\n",__FUNCTION__,cur_dmx,fec_sel_demux,data);
+}
+
 /*Enable the demux device*/
 static int dmx_enable(struct aml_dmx *dmx)
 {
@@ -2767,6 +2988,21 @@ static int dmx_enable(struct aml_dmx *dmx)
 		record = 0;
 		*/
 		break;
+	case AM_TS_SRC_HIU1:
+		fec_sel = 8;
+		fec_ctrl = 0;
+		/*
+			support record in HIU mode
+		record = 0;
+		*/
+		break;
+	case AM_TS_SRC_DMX0:
+	case AM_TS_SRC_DMX1:
+	case AM_TS_SRC_DMX2:
+		fec_sel = -1;
+		fec_ctrl = 0;
+		record = record ? 1 : 0;
+		break;
 	default:
 		fec_sel = 0;
 		fec_ctrl = 0;
@@ -2774,11 +3010,14 @@ static int dmx_enable(struct aml_dmx *dmx)
 		break;
 	}
 
-	if (dmx->channel[0].used || dmx->channel[1].used)
+	if (dmx->channel[0].used || dmx->channel[1].used) {
 		hi_bsf = 1;
-	else
+		if (fec_sel == 8) {
+			hi_bsf = 2; /*hi_bsf select hiu1*/
+		}
+	}else {
 		hi_bsf = 0;
-
+	}
 	if ((dvb->dsc[0].dst != -1)
 	    && ((dvb->dsc[0].dst - AM_TS_SRC_DMX0) == dmx->id))
 		fec_core_sel = 1;
@@ -2903,13 +3142,33 @@ static int dmx_enable(struct aml_dmx *dmx)
 			      (7<<VIDEO_ENDIAN) |
 			      (7 << OTHER_ENDIAN) |
 			      (7 << BYPASS_ENDIAN) | (0 << SECTION_ENDIAN));
-		DMX_WRITE_REG(dmx->id, TS_HIU_CTL,
-			      (0 << LAST_BURST_THRESHOLD) |
-			      (hi_bsf << USE_HI_BSF_INTERFACE));
+		if (fec_sel != 8) {
+			DMX_WRITE_REG(dmx->id, TS_HIU_CTL,
+//			      (0 << LAST_BURST_THRESHOLD) |
+			   (hi_bsf << USE_HI_BSF_INTERFACE));
+		} else {
+			DMX_WRITE_REG(dmx->id, TS_HIU_CTL,
+				  (1 << PDTS_WR_SEL) |
+			   (hi_bsf << USE_HI_BSF_INTERFACE));
+		}
 
-		DMX_WRITE_REG(dmx->id, FEC_INPUT_CONTROL,
+		if (fec_sel == -1) {
+			dmx_cascade_set(dmx->id,dmx->source);
+			DMX_WRITE_REG(dmx->id, FEC_INPUT_CONTROL,
 			      (fec_core_sel << FEC_CORE_SEL) |
-			      (fec_sel << FEC_SEL) | (fec_ctrl << 0));
+			      (0 << FEC_SEL) | (fec_ctrl << 0));
+		} else {
+			dmx_cascade_set(dmx->id,dmx->source);
+			if (fec_sel != 8) {
+				DMX_WRITE_REG(dmx->id, FEC_INPUT_CONTROL,
+				      (fec_core_sel << FEC_CORE_SEL) |
+				      (fec_sel << FEC_SEL) | (fec_ctrl << 0));
+			} else {
+				DMX_WRITE_REG(dmx->id, FEC_INPUT_CONTROL,
+				      (fec_core_sel << FEC_CORE_SEL) |
+				      (1 << FEC_SEL_3BIT) | (fec_ctrl << 0));
+			}
+		}
 		DMX_WRITE_REG(dmx->id, STB_OM_CTL,
 			      (0x40 << MAX_OM_DMA_COUNT) |
 			      (0x7f << LAST_OM_ADDR));
@@ -2931,8 +3190,13 @@ static int dmx_enable(struct aml_dmx *dmx)
 		DMX_WRITE_REG(dmx->id, STB_INT_MASK, 0);
 		DMX_WRITE_REG(dmx->id, FEC_INPUT_CONTROL, 0);
 		DMX_WRITE_REG(dmx->id, DEMUX_CONTROL, 0);
+		//dmx not used, but it can cascade for other dmx
+		if ((dmx->source == AM_TS_SRC_DMX0 ||
+			dmx->source == AM_TS_SRC_DMX1 ||
+			dmx->source == AM_TS_SRC_DMX2 ) &&
+			(dmx->id != dmx->source-AM_TS_SRC_DMX0))
+			dmx_cascade_set(dmx->id,dmx->source);
 	}
-
 	return 0;
 }
 
@@ -3594,28 +3858,9 @@ void dmx_reset_hw_ex(struct aml_dvb *dvb, int reset_irq)
 			/*if(ch->used) */
 			{
 				ch->id = n;
+				ch->work_mode = -1;
 				dsc_set_pid(ch, ch->pid);
-
-				if (ch->flags & DSC_SET_EVEN) {
-					dsc_set_key(ch, 0,
-						CA_CW_DVB_CSA_EVEN,
-						ch->even);
-				}
-				if (ch->flags & DSC_SET_ODD) {
-					dsc_set_key(ch, 0,
-						CA_CW_DVB_CSA_ODD,
-						ch->odd);
-				}
-				if (ch->flags & DSC_SET_AES_EVEN) {
-					dsc_set_key(ch, 0,
-						CA_CW_AES_EVEN,
-						ch->aes_even);
-				}
-				if (ch->flags & DSC_SET_AES_ODD) {
-					dsc_set_key(ch, 0,
-						CA_CW_AES_ODD,
-						ch->aes_odd);
-				}
+				dsc_set_keys(ch);
 			}
 		}
 	}
@@ -3797,28 +4042,9 @@ void dmx_reset_dmx_hw_ex_unlock(struct aml_dvb *dvb, struct aml_dmx *dmx,
 			for (n = 0; n < DSC_COUNT; n++) {
 				struct aml_dsc_channel *ch = &dsc->channel[n];
 				/*if(ch->used) */
+				ch->work_mode = -1;
 				dsc_set_pid(ch, ch->pid);
-
-				if (ch->flags & DSC_SET_EVEN) {
-					dsc_set_key(ch, 0,
-						CA_CW_DVB_CSA_EVEN,
-						ch->even);
-				}
-				if (ch->flags & DSC_SET_ODD) {
-					dsc_set_key(ch, 0,
-						CA_CW_DVB_CSA_ODD,
-						ch->odd);
-				}
-				if (ch->flags & DSC_SET_AES_EVEN) {
-					dsc_set_key(ch, 0,
-						CA_CW_AES_EVEN,
-						ch->aes_even);
-				}
-				if (ch->flags & DSC_SET_AES_ODD) {
-					dsc_set_key(ch, 0,
-						CA_CW_AES_ODD,
-						ch->aes_odd);
-				}
+				dsc_set_keys(ch);
 			}
 		}
 	}
@@ -4661,6 +4887,18 @@ int aml_dmx_hw_set_source(struct dmx_demux *demux, dmx_source_t src)
 	case DMX_SOURCE_DVR0:
 		hw_src = AM_TS_SRC_HIU;
 		break;
+	case DMX_SOURCE_DVR1:
+		hw_src = AM_TS_SRC_HIU1;
+		break;
+	case DMX_SOURCE_FRONT0_OFFSET:
+		hw_src = AM_TS_SRC_DMX0;
+		break;
+	case DMX_SOURCE_FRONT1_OFFSET:
+		hw_src = AM_TS_SRC_DMX1;
+		break;
+	case DMX_SOURCE_FRONT2_OFFSET:
+		hw_src = AM_TS_SRC_DMX2;
+		break;
 	default:
 		pr_error("illegal demux source %d\n", src);
 		ret = -EINVAL;
@@ -4714,6 +4952,9 @@ int aml_stb_hw_set_source(struct aml_dvb *dvb, dmx_source_t src)
 		break;
 	case DMX_SOURCE_DVR0:
 		hw_src = AM_TS_SRC_HIU;
+		break;
+	case DMX_SOURCE_DVR1:
+		hw_src = AM_TS_SRC_HIU1;
 		break;
 	case DMX_SOURCE_FRONT0_OFFSET:
 		hw_src = AM_TS_SRC_DMX0;
@@ -4821,34 +5062,34 @@ int aml_dsc_hw_set_source(struct aml_dsc *dsc,
 	}
 
 	if (src_reset) {
-		pr_dbg("dsc%d source changed: %d -> %d\n",
+		pr_inf("dsc%d source changed: %d -> %d\n",
 			dsc->id, org_src, hw_src);
 		if (org_src != -1) {
-			pr_dbg("reset dmx%d\n", (org_src - AM_TS_SRC_DMX0));
+			pr_inf("reset dmx%d\n", (org_src - AM_TS_SRC_DMX0));
 			dmx_reset_dmx_id_hw_ex_unlock(dvb,
 					(org_src - AM_TS_SRC_DMX0), 0);
 		}
 		if (hw_src != -1) {
-			pr_dbg("reset dmx%d\n", (hw_src - AM_TS_SRC_DMX0));
+			pr_inf("reset dmx%d\n", (hw_src - AM_TS_SRC_DMX0));
 			dmx_reset_dmx_id_hw_ex_unlock(dvb,
 					(hw_src - AM_TS_SRC_DMX0), 0);
 		} else
 			dsc_enable(dsc, 0);
 	}
 	if (dst_reset) {
-		pr_dbg("dsc%d dest changed: %d -> %d\n",
+		pr_inf("dsc%d dest changed: %d -> %d\n",
 			dsc->id, org_dst, hw_dst);
 		if (((!src_reset) && (org_dst != -1)) ||
 			(src_reset && (org_dst != -1) &&
 			(org_dst != org_src) && (org_dst != hw_src))) {
-			pr_dbg("reset dmx%d\n", (org_dst - AM_TS_SRC_DMX0));
+			pr_inf("reset dmx%d\n", (org_dst - AM_TS_SRC_DMX0));
 			dmx_reset_dmx_id_hw_ex_unlock(dvb,
 					(org_dst - AM_TS_SRC_DMX0), 0);
 		}
 		if (((!src_reset) && (hw_dst != -1)) ||
 			(src_reset && (hw_dst != -1)
 			&& (hw_dst != org_src) && (hw_dst != hw_src))) {
-			pr_dbg("reset dmx%d\n", (hw_dst - AM_TS_SRC_DMX0));
+			pr_inf("reset dmx%d\n", (hw_dst - AM_TS_SRC_DMX0));
 			dmx_reset_dmx_id_hw_ex_unlock(dvb,
 					(hw_dst - AM_TS_SRC_DMX0), 0);
 		}
@@ -4859,47 +5100,6 @@ int aml_dsc_hw_set_source(struct aml_dsc *dsc,
 	spin_unlock_irqrestore(&dvb->slock, flags);
 
 	return ret;
-}
-
-int aml_ciplus_hw_set_source(int src)
-{
-	int hw_src = 0;
-	int hw_dst = 0;
-	u32 data;
-
-	switch (src) {
-	case DMX_SOURCE_FRONT0_OFFSET:
-		hw_src = 0;
-		hw_dst = 1;
-		break;
-	case DMX_SOURCE_FRONT1_OFFSET:
-		hw_src = 1;
-		hw_dst = 2;
-		break;
-	case DMX_SOURCE_FRONT2_OFFSET:
-		hw_src = 2;
-		hw_dst = 4;
-		break;
-	default:
-		return -1;
-	}
-
-	data = READ_MPEG_REG(STB_TOP_CONFIG);
-
-	/* Set ciplus input source ,
-	 * output set 0 means no output. ---> need confirm.
-	 * if output set 0 still affects dsc output, we need to disable
-	 * ciplus module.
-	 */
-	data &= ~(3<<CIPLUS_IN_SEL);
-	WRITE_MPEG_REG(STB_TOP_CONFIG, data |
-			(hw_src << CIPLUS_IN_SEL));
-
-	data &= ~(7<<CIPLUS_OUT_SEL);
-	WRITE_MPEG_REG(STB_TOP_CONFIG, data |
-			(hw_dst << CIPLUS_OUT_SEL));
-	aml_ci_plus_enable();
-	return 0;
 }
 
 int aml_tso_hw_set_source(struct aml_dvb *dvb, dmx_source_t src)
@@ -5038,6 +5238,29 @@ u32 aml_dmx_get_audio_pts(struct aml_dvb *dvb)
 	return pts;
 }
 
+u32 aml_dmx_get_video_pts_bit32(struct aml_dvb *dvb)
+{
+	unsigned long flags;
+	u32 bit32;
+
+	spin_lock_irqsave(&dvb->slock, flags);
+	bit32 = video_pts_bit32;
+	spin_unlock_irqrestore(&dvb->slock, flags);
+
+	return bit32;
+}
+
+u32 aml_dmx_get_audio_pts_bit32(struct aml_dvb *dvb)
+{
+	unsigned long flags;
+	u32 bit32;
+
+	spin_lock_irqsave(&dvb->slock, flags);
+	bit32 = audio_pts_bit32;
+	spin_unlock_irqrestore(&dvb->slock, flags);
+
+	return bit32;
+}
 u32 aml_dmx_get_first_video_pts(struct aml_dvb *dvb)
 {
 	unsigned long flags;
@@ -5209,22 +5432,29 @@ static ssize_t ciplus_output_ctrl_show(struct class *class,
 					 char *buf)
 {
 	int ret;
+	char *out = "none";
 
-	pr_error("output demux use 3 bit to indicate. ");
-	pr_error("1bit:demux0 2bit:demux1 3bit:demux2\n");
-	if (ciplus_out_auto_mode == 1)
-		ret = sprintf(buf, "Using auto mode, value: %x\n",
-			ciplus_out_sel);
-	else
-		ret = sprintf(buf, "%d\n", ciplus_out_sel);
-	pr_error("ciplus output path:\n");
-	if (ciplus_out_sel&1)
-		pr_error("demux0 ");
-	if (ciplus_out_sel&1<<1)
-		pr_error("demux1 ");
-	if (ciplus_out_sel&1<<2)
-		pr_error("demux2 ");
-	pr_error("\n");
+	pr_inf("output demux use 3 bit to indicate.\n");
+	pr_inf("1bit:demux0 2bit:demux1 3bit:demux2\n");
+
+	switch (ciplus_out_sel) {
+	case 1:
+		out = "dmx0";
+		break;
+	case 2:
+		out = "dmx1";
+		break;
+	case 4:
+		out = "dmx2";
+		break;
+	default:
+		break;
+	}
+
+	ret = sprintf(buf, "%s 0x%x %s\n",
+		out,
+		ciplus_out_sel,
+		(ciplus_out_auto_mode) ? "" : "(force)");
 	return ret;
 }
 
@@ -5234,9 +5464,6 @@ static ssize_t ciplus_output_ctrl_store(struct class *class,
 {
 	int i, tmp;
 
-	pr_error("output demux use 3 bit to indicate. ");
-	pr_error("1bit:demux0 2bit:demux1 3bit:demux2, 8 for auto\n");
-	/*i = sscanf(buf, "%d", &tmp); */
 	i = kstrtoint(buf, -1, &tmp);
 	if (tmp > 8 || tmp < 0)
 		pr_error("Invalid output set\n");

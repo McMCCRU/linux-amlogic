@@ -180,7 +180,7 @@ int aml_get_hdmiin_audio_stable(
 	struct rx_audio_stat_s aud_sts;
 
 	rx_get_audio_status(&aud_sts);
-	ucontrol->value.integer.value[0] = aud_sts.aud_rcv_flag;
+	ucontrol->value.integer.value[0] = (aud_sts.aud_rcv_packet == 0) ? 0 : 1;
 
 	return 0;
 }

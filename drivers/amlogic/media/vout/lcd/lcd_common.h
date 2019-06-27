@@ -36,7 +36,10 @@
 /* 20181212: tl1 update p2p config and pll setting */
 /* 20181225: update phy config */
 /* 20190108: tl1 support tablet mode */
-#define LCD_DRV_VERSION    "20190108"
+/* 20190115: tl1 tcon all interface support */
+/* 20190225: optimize unifykey read flow to avoid crash */
+/* 20190308: add more panel clk_ss_level step for tl1 */
+#define LCD_DRV_VERSION    "20190308"
 
 #define VPP_OUT_SATURATE            (1 << 0)
 
@@ -69,6 +72,7 @@ extern int lcd_vlock_param_load_from_unifykey(struct lcd_config_s *pconf,
 extern void lcd_optical_vinfo_update(void);
 extern void lcd_timing_init_config(struct lcd_config_s *pconf);
 extern int lcd_vmode_change(struct lcd_config_s *pconf);
+extern void lcd_clk_change(struct lcd_config_s *pconf);
 extern void lcd_venc_change(struct lcd_config_s *pconf);
 extern void lcd_if_enable_retry(struct lcd_config_s *pconf);
 

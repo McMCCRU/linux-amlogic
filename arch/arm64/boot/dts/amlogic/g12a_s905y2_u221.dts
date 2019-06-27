@@ -45,7 +45,7 @@
 
 	memory@00000000 {
 		device_type = "memory";
-		linux,usable-memory = <0x0 0x000000 0x0 0x80000000>;
+		linux,usable-memory = <0x0 0x100000 0x0 0x7ff00000>;
 	};
 
 	reserved-memory {
@@ -139,6 +139,19 @@
 			/* 1920x1080x2x4  =16 M */
 			size = <0x0 0x04000000>;
 			alignment = <0x0 0x400000>;
+		};
+	};
+
+	gpioleds {
+		compatible = "gpio-leds";
+		status = "okay";
+
+		sys_led {
+			label = "sys_led";
+			gpios = <&gpio_ao 0x40 0x0>;
+			default-state = "on";
+			retain-state-suspended;
+			linux,default-trigger = "cpu0";
 		};
 	};
 
@@ -696,7 +709,7 @@
 	display_size_default = <1920 1080 1920 2160 32>;
 	mem_size = <0x00800000 0x1980000 0x100000 0x100000 0x800000>;
 	logo_addr = "0x7f800000";
-	mem_alloc = <0>;
+	mem_alloc = <1>;
 	pxp_mode = <0>; /** 0:normal mode 1:pxp mode */
 };
 
@@ -1162,7 +1175,7 @@
 };
 
 &sd_emmc_b2 {
-	status = "disabled";
+	status = "okay";
 	sd {
 		caps = "MMC_CAP_4_BIT_DATA",
 			 "MMC_CAP_MMC_HIGHSPEED",
@@ -1285,4 +1298,3 @@
 &defendkey {
 	status = "okay";
 };
-

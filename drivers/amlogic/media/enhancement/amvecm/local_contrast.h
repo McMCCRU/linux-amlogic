@@ -21,6 +21,10 @@
 
 #include <linux/amlogic/media/vfm/vframe.h>
 
+/*V1.0: Local_contrast Basic function, iir algorithm, debug interface for tool*/
+/*V1.1: add ioctrl load interface supprt*/
+#define LC_VER		"Ref.2019/03/07-V1.1"
+
 enum lc_mtx_sel_e {
 	INP_MTX = 0x1,
 	OUTP_MTX = 0x2,
@@ -32,6 +36,8 @@ enum lc_mtx_csc_e {
 	LC_MTX_NULL = 0,
 	LC_MTX_YUV709L_RGB = 0x1,
 	LC_MTX_RGB_YUV709L = 0x2,
+	LC_MTX_YUV601L_RGB = 0x3,
+	LC_MTX_RGB_YUV601L = 0x4,
 	LC_MTX_MAX
 };
 
@@ -44,6 +50,15 @@ enum lc_reg_lut_e {
 	CNTST_LMT = 0x20,
 	MAX_REG_LUT
 };
+
+struct lc_alg_param_s {
+	unsigned int dbg_parm0;
+	unsigned int dbg_parm1;
+	unsigned int dbg_parm2;
+	unsigned int dbg_parm3;
+	unsigned int dbg_parm4;
+};
+
 
 extern int amlc_debug;
 extern int lc_en;
@@ -70,8 +85,14 @@ extern int alpha2;
 extern int refresh_bit;
 extern int ts;
 extern int scene_change_th;
+extern bool lc_curve_fresh;
+extern int *lc_szcurve;/*12*8*6+4*/
+extern int *curve_nodes_cur;
+extern int *lc_hist;/*12*8*17*/
+extern struct ve_lc_curve_parm_s lc_curve_parm_load;
+extern struct lc_alg_param_s lc_alg_parm;
 
-extern void lc_init(void);
+extern void lc_init(int bitdepth);
 extern void lc_process(struct vframe_s *vf,
 	unsigned int sps_h_en,
 	unsigned int sps_v_en);

@@ -181,8 +181,9 @@ void eq_dwork_handler(struct work_struct *work)
 	cancel_delayed_work(&eq_dwork);
 
 	/* for tl1 no SW eq */
-	if (rx.chip_id == CHIP_ID_TL1)
+	if (rx.hdmirxdev->data->chip_id == CHIP_ID_TL1) {
 		return;
+	}
 
 	for (i = 0; i < NTRYS; i++) {
 		if (SettingFinder() == 1) {
@@ -488,8 +489,7 @@ int rx_eq_algorithm(void)
 	uint8_t pll_rate = hdmirx_rd_phy(PHY_MAINFSM_STATUS1) >> 9 & 3;
 
 	/* for tl1 no SW eq */
-	if (rx.chip_id == CHIP_ID_TL1) {
-		hdmirx_phy_init();
+	if (rx.hdmirxdev->data->chip_id == CHIP_ID_TL1) {
 		eq_sts = E_EQ_FINISH;
 		return 1;
 	}

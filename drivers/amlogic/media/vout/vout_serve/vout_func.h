@@ -36,6 +36,7 @@
 #define VPU_VENCX_CLK_CTRL                         0x2785
 #define VPP_POSTBLEND_H_SIZE                       0x1d21
 #define VPP2_POSTBLEND_H_SIZE                      0x1921
+#define VPP_WRBAK_CTRL                             0x1df9
 
 struct vout_cdev_s {
 	dev_t         devno;
@@ -88,6 +89,10 @@ extern enum vmode_e validate_vmode2(char *p);
 extern int vout2_suspend(void);
 extern int vout2_resume(void);
 extern int vout2_shutdown(void);
+#endif
+
+#if defined(CONFIG_ARCH_MESON64_ODROID_COMMON)
+extern int cvbs_cable_connected(void);
 #endif
 
 #endif

@@ -28,6 +28,8 @@
 #include <asm/cacheflush.h>
 #include <linux/crc32.h>
 
+#include <trace/events/meson_atrace.h>
+
 #define VFRAME_BLOCK_SIZE (512 * SZ_1K)/*512 for 1080p default init.*/
 #define VFRAME_BLOCK_SIZE_4K (2 * SZ_1M) /*2M for 4K default.*/
 #define VFRAME_BLOCK_SIZE_MAX (4 * SZ_1M)
@@ -70,13 +72,10 @@ static int copy_from_user_to_phyaddr(void *virts, const char __user *buf,
 		if (copy_from_user(p, buf, size))
 			return -EFAULT;
 
-		if (pading) {
-			p += size;
-			memset(p, 0, pading);
-		}
+		if (pading)
+			memset(p + size, 0, pading);
 
-		dma_sync_single_for_device(get_vdec_device(),
-			addr, size + pading, DMA_TO_DEVICE);
+		codec_mm_dma_flush(p, size + pading, DMA_TO_DEVICE);
 
 		return 0;
 	}
@@ -92,10 +91,8 @@ static int copy_from_user_to_phyaddr(void *virts, const char __user *buf,
 			return -EFAULT;
 		}
 
+		codec_mm_dma_flush(p, span, DMA_TO_DEVICE);
 		codec_mm_unmap_phyaddr(p);
-
-		dma_sync_single_for_device(get_vdec_device(),
-			addr, span, DMA_TO_DEVICE);
 	}
 
 	if (!remain)
@@ -115,10 +112,8 @@ static int copy_from_user_to_phyaddr(void *virts, const char __user *buf,
 	if (pading)
 		memset(p + remain, 0, pading);
 
+	codec_mm_dma_flush(p, remain + pading, DMA_TO_DEVICE);
 	codec_mm_unmap_phyaddr(p);
-
-	dma_sync_single_for_device(get_vdec_device(),
-		addr, remain + pading, DMA_TO_DEVICE);
 
 	return 0;
 }
@@ -160,27 +155,30 @@ static int vframe_chunk_fill(struct vdec_input_s *input,
 		if (!block->is_mapped) {
 			p = codec_mm_vmap(block->start + wp, len);
 			memset(p, 0, len);
+			codec_mm_dma_flush(p, len, DMA_TO_DEVICE);
 			codec_mm_unmap_phyaddr(p);
-		} else
+		} else {
 			memset(p, 0, len);
-
-		dma_sync_single_for_device(get_vdec_device(),
-			block->start + wp,
-			len, DMA_TO_DEVICE);
+			codec_mm_dma_flush(p, len, DMA_TO_DEVICE);
+		}
 
 		if (chunk->pading_size > len) {
 			p = (u8 *)block->start_virt;
 
 			if (!block->is_mapped) {
-				p = codec_mm_vmap(block->start, count - len);
-				memset(p, 0, count - len);
+				p = codec_mm_vmap(block->start,
+					chunk->pading_size - len);
+				memset(p, 0, chunk->pading_size - len);
+				codec_mm_dma_flush(p,
+					chunk->pading_size - len,
+					DMA_TO_DEVICE);
 				codec_mm_unmap_phyaddr(p);
-			} else
-				memset(p, 0, count - len);
-
-			dma_sync_single_for_device(get_vdec_device(),
-					block->start,
-				chunk->pading_size - len, DMA_TO_DEVICE);
+			} else {
+				memset(p, 0, chunk->pading_size - len);
+				codec_mm_dma_flush(p,
+					chunk->pading_size - len,
+					DMA_TO_DEVICE);
+			}
 		}
 	}
 
@@ -897,6 +895,7 @@ int vdec_input_add_chunk(struct vdec_input_s *input, const char *buf,
 	list_add_tail(&chunk->list, &input->vframe_chunk_list);
 	input->data_size += chunk->size;
 	input->have_frame_num++;
+	ATRACE_COUNTER(MEM_NAME, input->have_frame_num);
 	if (chunk->pts_valid) {
 		input->last_inpts_u64 = chunk->pts64;
 		input->last_in_nopts_cnt = 0;
@@ -995,6 +994,7 @@ void vdec_input_release_chunk(struct vdec_input_s *input,
 
 	list_del(&chunk->list);
 	input->have_frame_num--;
+	ATRACE_COUNTER(MEM_NAME, input->have_frame_num);
 	if (chunk->pts_valid) {
 		input->last_comsumed_no_pts_cnt = 0;
 		input->last_comsumed_pts_u64 = chunk->pts64;

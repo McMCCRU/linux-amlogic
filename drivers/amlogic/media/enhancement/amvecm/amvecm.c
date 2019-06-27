@@ -63,6 +63,7 @@
 #include "vlock.h"
 #include "hdr/am_hdr10_plus.h"
 #include "local_contrast.h"
+#include "arch/vpp_hdr_regs.h"
 
 #define pr_amvecm_dbg(fmt, args...)\
 	do {\
@@ -119,7 +120,7 @@ static unsigned int pre_hist_height, pre_hist_width;
 static unsigned int pc_mode = 0xff;
 static unsigned int pc_mode_last = 0xff;
 static struct hdr_metadata_info_s vpp_hdr_metadata_s;
-
+unsigned int atv_source_flg;
 /*bit0: brightness
  *bit1: brightness2
  *bit2: saturation_hue
@@ -182,7 +183,7 @@ unsigned int debug_game_mode_1;
 module_param(debug_game_mode_1, uint, 0664);
 MODULE_PARM_DESC(debug_game_mode_1, "\n debug_game_mode_1\n");
 unsigned int pq_user_value;
-unsigned int hdr_source_type = 0x1;
+enum hdr_type_e hdr_source_type = HDRTYPE_SDR;
 
 #define SR0_OFFSET 0xc00
 #define SR1_OFFSET 0xc80
@@ -238,7 +239,7 @@ __setup("pq=", amvecm_load_pq_val);
 static int amvecm_set_contrast2(int val)
 {
 	val += 0x80;
-	if (get_cpu_type() == MESON_CPU_MAJOR_ID_TL1) {
+	if (get_cpu_type() >= MESON_CPU_MAJOR_ID_G12A) {
 		WRITE_VPP_REG_BITS(VPP_VADJ2_Y_2,
 			val, 0, 8);
 		WRITE_VPP_REG_BITS(VPP_VADJ2_MISC, 1, 0, 1);
@@ -256,14 +257,14 @@ static int amvecm_set_brightness2(int val)
 	if (get_cpu_type() <= MESON_CPU_MAJOR_ID_GXTVBB)
 		WRITE_VPP_REG_BITS(VPP_VADJ2_Y,
 			vdj_mode_s.brightness2, 8, 9);
-	else if (get_cpu_type() == MESON_CPU_MAJOR_ID_TL1)
+	else if (get_cpu_type() >= MESON_CPU_MAJOR_ID_G12A)
 		WRITE_VPP_REG_BITS(VPP_VADJ2_Y_2,
 			vdj_mode_s.brightness2, 8, 11);
 	else
 		WRITE_VPP_REG_BITS(VPP_VADJ2_Y,
 			vdj_mode_s.brightness2 >> 1, 8, 10);
 
-	if (get_cpu_type() == MESON_CPU_MAJOR_ID_TL1)
+	if (get_cpu_type() >= MESON_CPU_MAJOR_ID_G12A)
 		WRITE_VPP_REG_BITS(VPP_VADJ2_MISC, 1, 0, 1);
 	else
 		WRITE_VPP_REG_BITS(VPP_VADJ_CTRL, 1, 2, 1);
@@ -292,7 +293,7 @@ static ssize_t video_adj1_brightness_show(struct class *cla,
 		val = (val << 23) >> 23;
 
 		return sprintf(buf, "%d\n", val);
-	} else if (get_cpu_type() == MESON_CPU_MAJOR_ID_TL1) {
+	} else if (get_cpu_type() >= MESON_CPU_MAJOR_ID_G12A) {
 		val = (READ_VPP_REG(VPP_VADJ1_Y_2) >> 8) & 0x7ff;
 		val = (val << 21) >> 21;
 
@@ -317,12 +318,12 @@ static ssize_t video_adj1_brightness_store(struct class *cla,
 
 	if (get_cpu_type() <= MESON_CPU_MAJOR_ID_GXTVBB)
 		WRITE_VPP_REG_BITS(VPP_VADJ1_Y, val, 8, 9);
-	else if (get_cpu_type() == MESON_CPU_MAJOR_ID_TL1)
+	else if (get_cpu_type() >= MESON_CPU_MAJOR_ID_G12A)
 		WRITE_VPP_REG_BITS(VPP_VADJ1_Y_2, val, 8, 11);
 	else
 		WRITE_VPP_REG_BITS(VPP_VADJ1_Y, val >> 1, 8, 10);
 
-	if (get_cpu_type() == MESON_CPU_MAJOR_ID_TL1)
+	if (get_cpu_type() >= MESON_CPU_MAJOR_ID_G12A)
 		WRITE_VPP_REG_BITS(VPP_VADJ1_MISC, 1, 0, 1);
 	else
 		WRITE_VPP_REG_BITS(VPP_VADJ_CTRL, 1, 0, 1);
@@ -333,7 +334,7 @@ static ssize_t video_adj1_brightness_store(struct class *cla,
 static ssize_t video_adj1_contrast_show(struct class *cla,
 			struct class_attribute *attr, char *buf)
 {
-	if (get_cpu_type() == MESON_CPU_MAJOR_ID_TL1)
+	if (get_cpu_type() >= MESON_CPU_MAJOR_ID_G12A)
 		return sprintf(buf, "%d\n",
 			(int)(READ_VPP_REG(VPP_VADJ1_Y_2) & 0xff) - 0x80);
 	else
@@ -354,7 +355,7 @@ static ssize_t video_adj1_contrast_store(struct class *cla,
 
 	val += 0x80;
 
-	if (get_cpu_type() == MESON_CPU_MAJOR_ID_TL1) {
+	if (get_cpu_type() >= MESON_CPU_MAJOR_ID_G12A) {
 		WRITE_VPP_REG_BITS(VPP_VADJ1_Y_2, val, 0, 8);
 		WRITE_VPP_REG_BITS(VPP_VADJ1_MISC, 1, 0, 1);
 	} else {
@@ -376,7 +377,7 @@ static ssize_t video_adj2_brightness_show(struct class *cla,
 		val = (val << 23) >> 23;
 
 		return sprintf(buf, "%d\n", val);
-	} else if (get_cpu_type() == MESON_CPU_MAJOR_ID_TL1) {
+	} else if (get_cpu_type() >= MESON_CPU_MAJOR_ID_G12A) {
 		val = (READ_VPP_REG(VPP_VADJ2_Y_2) >> 8) & 0x7ff;
 		val = (val << 21) >> 21;
 
@@ -405,7 +406,7 @@ static ssize_t video_adj2_brightness_store(struct class *cla,
 static ssize_t video_adj2_contrast_show(struct class *cla,
 			struct class_attribute *attr, char *buf)
 {
-	if (get_cpu_type() == MESON_CPU_MAJOR_ID_TL1)
+	if (get_cpu_type() >= MESON_CPU_MAJOR_ID_G12A)
 		return sprintf(buf, "%d\n",
 			(int)(READ_VPP_REG(VPP_VADJ2_Y_2) & 0xff) - 0x80);
 	else
@@ -736,8 +737,36 @@ static ssize_t amvecm_vlock_store(struct class *cla,
 		vlock_log_stop();
 	} else if (!strncmp(parm[0], "log_print", 9)) {
 		vlock_log_print();
+	} else if (!strncmp(parm[0], "phase", 5)) {
+		if (kstrtol(parm[1], 10, &val) < 0)
+			return -EINVAL;
+		vlock_set_phase(val);
+	} else if (!strncmp(parm[0], "phlock_en", 9)) {
+		if (kstrtol(parm[1], 10, &val) < 0)
+			return -EINVAL;
+		vlock_set_phase_en(val);
 	} else {
-		pr_info("unsupport cmd!!\n");
+		pr_info("----cmd list -----\n");
+		pr_info("vlock_mode val\n");
+		pr_info("vlock_en val\n");
+		pr_info("vlock_debug val\n");
+		pr_info("vlock_adapt val\n");
+		pr_info("vlock_dis_cnt_limit val\n");
+		pr_info("vlock_delta_limit val\n");
+		pr_info("vlock_dynamic_adjust val\n");
+		pr_info("vlock_line_limit val\n");
+		pr_info("vlock_dis_cnt_no_vf_limit val\n");
+		pr_info("vlock_line_limit val\n");
+		pr_info("vlock_support val\n");
+		pr_info("enable\n");
+		pr_info("disable\n");
+		pr_info("status\n");
+		pr_info("dump_reg\n");
+		pr_info("log_start\n");
+		pr_info("log_stop\n");
+		pr_info("log_print\n");
+		pr_info("phase persent\n");
+		pr_info("phlock_en val\n");
 	}
 	if (sel < VLOCK_PARAM_MAX)
 		vlock_param_set(temp_val, sel);
@@ -783,7 +812,7 @@ void vpp_get_vframe_hist_info(struct vframe_s *vf)
 	unsigned int hist_height, hist_width;
 	u64 divid;
 
-	if (get_cpu_type() == MESON_CPU_MAJOR_ID_TL1) {
+	if (get_cpu_type() >= MESON_CPU_MAJOR_ID_G12A) {
 		/*TL1 remove VPP_IN_H_V_SIZE register*/
 		hist_width = READ_VPP_REG_BITS(VPP_PREBLEND_H_SIZE, 0, 13);
 		hist_height = READ_VPP_REG_BITS(VPP_PREBLEND_H_SIZE, 16, 13);
@@ -1031,7 +1060,8 @@ void amvecm_video_latch(void)
 	}
 /* #endif */
 	pq_user_latch_process();
-
+	if (cpu_after_eq(MESON_CPU_MAJOR_ID_TL1))
+		ve_lc_latch_process();
 }
 
 int amvecm_on_vs(
@@ -1081,7 +1111,8 @@ int amvecm_on_vs(
 	/* add some flag to trigger */
 	if (vf) {
 		/*gxlx sharpness adaptive setting*/
-		if (is_meson_gxlx_cpu())
+		if (is_meson_gxlx_cpu() || is_meson_g12a_cpu()
+		|| is_meson_g12b_cpu() || is_meson_sm1_cpu())
 			amve_sharpness_adaptive_setting(vf,
 				sps_h_en, sps_v_en);
 		amvecm_bricon_process(
@@ -1200,7 +1231,7 @@ static int amvecm_set_saturation_hue(int mab)
 		mb = -512;
 	mab =  ((ma & 0x3ff) << 16) | (mb & 0x3ff);
 
-	if (get_cpu_type() == MESON_CPU_MAJOR_ID_TL1)
+	if (get_cpu_type() >= MESON_CPU_MAJOR_ID_G12A)
 		WRITE_VPP_REG(VPP_VADJ1_MA_MB_2, mab);
 	else
 		WRITE_VPP_REG(VPP_VADJ1_MA_MB, mab);
@@ -1214,7 +1245,7 @@ static int amvecm_set_saturation_hue(int mab)
 	md = (s16)((mab<<6)>>22);  /* md =  ma; */
 	mab = ((mc&0x3ff)<<16)|(md&0x3ff);
 
-	if (get_cpu_type() == MESON_CPU_MAJOR_ID_TL1) {
+	if (get_cpu_type() >= MESON_CPU_MAJOR_ID_G12A) {
 		WRITE_VPP_REG(VPP_VADJ1_MC_MD_2, mab);
 		WRITE_VPP_REG_BITS(VPP_VADJ1_MISC, 1, 0, 1);
 	} else {
@@ -1269,7 +1300,7 @@ static int amvecm_set_saturation_hue_post(int val1,
 	mab =  ((ma & 0x3ff) << 16) | (mb & 0x3ff);
 	pr_info("\n[amvideo..] saturation_post:%d hue_post:%d mab:%x\n",
 			saturation_post, hue_post, mab);
-	if (get_cpu_type() == MESON_CPU_MAJOR_ID_TL1)
+	if (get_cpu_type() >= MESON_CPU_MAJOR_ID_G12A)
 		WRITE_VPP_REG(VPP_VADJ2_MA_MB_2, mab);
 	else
 		WRITE_VPP_REG(VPP_VADJ2_MA_MB, mab);
@@ -1281,7 +1312,7 @@ static int amvecm_set_saturation_hue_post(int val1,
 		mc = -512;
 	md = (s16)((mab<<6)>>22);  /* md =	ma; */
 	mab = ((mc&0x3ff)<<16)|(md&0x3ff);
-	if (get_cpu_type() == MESON_CPU_MAJOR_ID_TL1) {
+	if (get_cpu_type() >= MESON_CPU_MAJOR_ID_G12A) {
 		WRITE_VPP_REG(VPP_VADJ2_MC_MD_2, mab);
 		WRITE_VPP_REG_BITS(VPP_VADJ2_MISC, 1, 0, 1);
 	} else {
@@ -1305,6 +1336,41 @@ static int gamma_table_compare(struct tcon_gamma_table_s *table1,
 	return flag;
 }
 
+static void parse_overscan_table(unsigned int length,
+	struct ve_pq_table_s *amvecm_pq_load_table)
+{
+	unsigned int i;
+	unsigned int offset = TIMING_UHD + 1;
+
+	memset(overscan_table, 0, sizeof(overscan_table));
+	for (i = 0; i < length; i++) {
+		overscan_table[i].load_flag =
+			(amvecm_pq_load_table[i].src_timing >> 31) & 0x1;
+		overscan_table[i].afd_enable =
+			(amvecm_pq_load_table[i].src_timing >> 30) & 0x1;
+		overscan_table[i].screen_mode =
+			(amvecm_pq_load_table[i].src_timing >> 24) & 0x3f;
+		overscan_table[i].source =
+			(amvecm_pq_load_table[i].src_timing >> 16) & 0xff;
+		overscan_table[i].timing =
+			amvecm_pq_load_table[i].src_timing & 0xffff;
+		overscan_table[i].hs =
+			amvecm_pq_load_table[i].value1 & 0xffff;
+		overscan_table[i].he =
+			(amvecm_pq_load_table[i].value1 >> 16) & 0xffff;
+		overscan_table[i].vs =
+			amvecm_pq_load_table[i].value2 & 0xffff;
+		overscan_table[i].ve =
+				(amvecm_pq_load_table[i].value2 >> 16) & 0xffff;
+	}
+	/*because SOURCE_TV is 0,so need to add a flg to check ATV*/
+	if ((overscan_table[offset].load_flag == 1) &&
+		(overscan_table[offset].source == SOURCE_TV))
+		atv_source_flg = 1;
+	else
+		atv_source_flg = 0;
+}
+
 static long amvecm_ioctl(struct file *file,
 		unsigned int cmd, unsigned long arg)
 {
@@ -1313,7 +1379,6 @@ static long amvecm_ioctl(struct file *file,
 	unsigned int mem_size;
 	struct ve_pq_load_s vpp_pq_load;
 	struct ve_pq_table_s *vpp_pq_load_table = NULL;
-	int i = 0;
 	enum color_primary_e color_pri;
 
 	if (debug_amvecm & 2)
@@ -1496,7 +1561,8 @@ static long amvecm_ioctl(struct file *file,
 			break;
 		}
 		/*check pq_table length copy_from_user*/
-		if (vpp_pq_load.length > PQ_TABLE_MAX_LENGTH) {
+		if ((vpp_pq_load.length > TIMING_MAX) ||
+			(vpp_pq_load.length <= 0))  {
 			ret = -EFAULT;
 			pr_amvecm_dbg("[amvecm..] pq ioctl length check fail!!\n");
 			break;
@@ -1513,28 +1579,7 @@ static long amvecm_ioctl(struct file *file,
 			pr_amvecm_dbg("[amvecm..] ovescan copy fail!!\n");
 			break;
 		}
-		for (i = 0; i < vpp_pq_load.length; i++) {
-			if (i >= TIMING_MAX)
-				break;
-			overscan_table[i].load_flag =
-				(vpp_pq_load_table[i].src_timing >> 31) & 0x1;
-			overscan_table[i].afd_enable =
-				(vpp_pq_load_table[i].src_timing >> 30) & 0x1;
-			overscan_table[i].screen_mode =
-				(vpp_pq_load_table[i].src_timing >> 24) & 0x3f;
-			overscan_table[i].source =
-				(vpp_pq_load_table[i].src_timing >> 16) & 0xff;
-			overscan_table[i].timing =
-				vpp_pq_load_table[i].src_timing & 0xffff;
-			overscan_table[i].hs =
-				vpp_pq_load_table[i].value1 & 0xffff;
-			overscan_table[i].he =
-				(vpp_pq_load_table[i].value1 >> 16) & 0xffff;
-			overscan_table[i].vs =
-				vpp_pq_load_table[i].value2 & 0xffff;
-			overscan_table[i].ve =
-				(vpp_pq_load_table[i].value2 >> 16) & 0xffff;
-		}
+		parse_overscan_table(vpp_pq_load.length, vpp_pq_load_table);
 		break;
 	case AMVECM_IOC_G_DNLP_STATE:
 		if (copy_to_user((void __user *)arg,
@@ -1600,8 +1645,8 @@ static long amvecm_ioctl(struct file *file,
 			vecm_latch_flag |= FLAG_VADJ1_BRI;
 		}
 		if (vdj_mode_flg & 0x2) { /*brightness2*/
-			if ((vdj_mode_s.brightness2 < -255) ||
-				(vdj_mode_s.brightness2 > 255)) {
+			if ((vdj_mode_s.brightness2 < -1024) ||
+				(vdj_mode_s.brightness2 > 1023)) {
 				pr_amvecm_dbg("load brightness2 value invalid!!!\n");
 				return -EINVAL;
 			}
@@ -1647,6 +1692,23 @@ static long amvecm_ioctl(struct file *file,
 			}
 			ret = amvecm_set_contrast2(vdj_mode_s.contrast2);
 		}
+		break;
+	case AMVECM_IOC_S_LC_CURVE:
+		if (copy_from_user(&lc_curve_parm_load,
+			(void __user *)arg,
+			sizeof(struct ve_lc_curve_parm_s))) {
+			pr_amvecm_dbg("lc load curve parm fail\n");
+			ret = -EFAULT;
+		} else {
+		    ve_lc_curve_update();
+			pr_amvecm_dbg("lc load curve parm success\n");
+		}
+		break;
+	case AMVECM_IOC_G_HDR_TYPE:
+		argp = (void __user *)arg;
+		if (copy_to_user(argp,
+				&hdr_source_type, sizeof(enum hdr_type_e)))
+			ret = -EFAULT;
 		break;
 	default:
 		ret = -EINVAL;
@@ -1698,9 +1760,11 @@ static void d_convert_str(int num,
 
 	if (bit_chose == 10)
 		snprintf(buf, sizeof(buf), "%d", num);
-	if (bit_chose == 16)
+	else if (bit_chose == 16)
 		snprintf(buf, sizeof(buf), "%x", num);
 	count = strlen(buf);
+	if (count > 4)
+		count = 4;
 	for (i = 0; i < count; i++)
 		buf[i + char_bit] = buf[i];
 	for (i = 0; i < char_bit; i++)
@@ -1733,6 +1797,8 @@ static ssize_t amvecm_dnlp_debug_store(struct class *cla,
 	stemp = kmalloc(400, GFP_KERNEL);
 	if (!stemp)
 		return 0;
+	memset(stemp, 0, 400);
+
 	buf_orig = kstrdup(buf, GFP_KERNEL);
 	parse_param_amvecm(buf_orig, (char **)&parm);
 
@@ -1911,6 +1977,101 @@ static ssize_t amvecm_dnlp_debug_store(struct class *cla,
 					pr_info("error cmd\n");
 				else
 					pr_info("%d\n", wext_gain_copy[val]);
+			}
+		} else if (!strcmp(parm[1], "adp_thrd")) {
+			if (parm[2] == NULL) {
+				pr_info("error cmd\n");
+				goto free_buf;
+			} else if (!strcmp(parm[2], "all")) {
+				for (i = 0; i < 33; i++)
+					d_convert_str(adp_thrd_copy[i],
+						i, stemp, 4, 10);
+					pr_info("%s\n", stemp);
+			} else {
+				if (kstrtoul(parm[2], 10, &val) < 0)
+					goto free_buf;
+
+				if ((val > 32) || (val < 0))
+					pr_info("error cmd\n");
+				else
+					pr_info("%d\n", adp_thrd_copy[val]);
+			}
+		} else if (!strcmp(parm[1], "reg_blk_boost_12")) {
+			if (parm[2] == NULL) {
+				pr_info("error cmd\n");
+				goto free_buf;
+			} else if (!strcmp(parm[2], "all")) {
+				for (i = 0; i < 13; i++)
+					d_convert_str(reg_blk_boost_12_copy[i],
+						i, stemp, 4, 10);
+					pr_info("%s\n", stemp);
+			} else {
+				if (kstrtoul(parm[2], 10, &val) < 0)
+					goto free_buf;
+
+				if ((val > 12) || (val < 0))
+					pr_info("error cmd\n");
+				else
+					pr_info("%d\n",
+					reg_blk_boost_12_copy[val]);
+			}
+		} else if (!strcmp(parm[1], "reg_adp_ofset_20")) {
+			if (parm[2] == NULL) {
+				pr_info("error cmd\n");
+				goto free_buf;
+			} else if (!strcmp(parm[2], "all")) {
+				for (i = 0; i < 20; i++)
+					d_convert_str(reg_adp_ofset_20_copy[i],
+						i, stemp, 4, 10);
+					pr_info("%s\n", stemp);
+			} else {
+				if (kstrtoul(parm[2], 10, &val) < 0)
+					goto free_buf;
+
+				if ((val > 19) || (val < 0))
+					pr_info("error cmd\n");
+				else
+					pr_info("%d\n",
+					reg_adp_ofset_20_copy[val]);
+			}
+		} else if (!strcmp(parm[1], "reg_mono_protect")) {
+			if (parm[2] == NULL) {
+				pr_info("error cmd\n");
+				goto free_buf;
+			} else if (!strcmp(parm[2], "all")) {
+				for (i = 0; i < 6; i++)
+					d_convert_str(reg_mono_protect_copy[i],
+						i, stemp, 4, 10);
+					pr_info("%s\n", stemp);
+			} else {
+				if (kstrtoul(parm[2], 10, &val) < 0)
+					goto free_buf;
+
+				if ((val > 5) || (val < 0))
+					pr_info("error cmd\n");
+				else
+					pr_info("%d\n",
+					reg_mono_protect_copy[val]);
+			}
+		} else if (!strcmp(parm[1], "reg_trend_wht_expand_lut8")) {
+			if (parm[2] == NULL) {
+				pr_info("error cmd\n");
+				goto free_buf;
+			} else if (!strcmp(parm[2], "all")) {
+				for (i = 0; i < 9; i++)
+					d_convert_str(
+					reg_trend_wht_expand_lut8_copy[i],
+						i, stemp, 4, 10);
+					pr_info("%s\n", stemp);
+			} else {
+				if (kstrtoul(parm[2], 10, &val) < 0)
+					goto free_buf;
+
+				if ((val > 8) || (val < 0))
+					pr_info("error cmd\n");
+				else
+					pr_info("%d\n",
+					reg_trend_wht_expand_lut8_copy[val]);
 			}
 		} else if (!strcmp(parm[1], "ve_dnlp_tgt")) {
 			/*read only curve*/
@@ -2134,6 +2295,112 @@ static ssize_t amvecm_dnlp_debug_store(struct class *cla,
 				else
 					wext_gain_copy[num] = val;
 			}
+		} else if (!strcmp(parm[1], "adp_thrd")) {
+			if (parm[2] == NULL) {
+				pr_info("error cmd\n");
+				goto free_buf;
+			} else if (!strcmp(parm[2], "all")) {
+				str_sapr_to_d(parm[3], curve_val, 5);
+				for (i = 0; i < 33; i++)
+					adp_thrd_copy[i] = curve_val[i];
+			} else {
+				if (kstrtoul(parm[2], 10, &val) < 0)
+					goto free_buf;
+
+				num = val;
+				if (kstrtoul(parm[3], 10, &val) < 0)
+					goto free_buf;
+
+				if (num > 32)
+					pr_info("error cmd\n");
+				else
+					adp_thrd_copy[num] = val;
+			}
+		} else if (!strcmp(parm[1], "reg_blk_boost_12")) {
+			if (parm[2] == NULL) {
+				pr_info("error cmd\n");
+				goto free_buf;
+			} else if (!strcmp(parm[2], "all")) {
+				str_sapr_to_d(parm[3], curve_val, 5);
+				for (i = 0; i < 13; i++)
+					reg_blk_boost_12_copy[i] = curve_val[i];
+			} else {
+				if (kstrtoul(parm[2], 10, &val) < 0)
+					goto free_buf;
+
+				num = val;
+				if (kstrtoul(parm[3], 10, &val) < 0)
+					goto free_buf;
+
+				if (num > 12)
+					pr_info("error cmd\n");
+				else
+					reg_blk_boost_12_copy[num] = val;
+			}
+		} else if (!strcmp(parm[1], "reg_adp_ofset_20")) {
+			if (parm[2] == NULL) {
+				pr_info("error cmd\n");
+				goto free_buf;
+			} else if (!strcmp(parm[2], "all")) {
+				str_sapr_to_d(parm[3], curve_val, 5);
+				for (i = 0; i < 20; i++)
+					reg_adp_ofset_20_copy[i] = curve_val[i];
+			} else {
+				if (kstrtoul(parm[2], 10, &val) < 0)
+					goto free_buf;
+
+				num = val;
+				if (kstrtoul(parm[3], 10, &val) < 0)
+					goto free_buf;
+
+				if (num > 19)
+					pr_info("error cmd\n");
+				else
+					reg_adp_ofset_20_copy[num] = val;
+			}
+		} else if (!strcmp(parm[1], "reg_mono_protect")) {
+			if (parm[2] == NULL) {
+				pr_info("error cmd\n");
+				goto free_buf;
+			} else if (!strcmp(parm[2], "all")) {
+				str_sapr_to_d(parm[3], curve_val, 5);
+				for (i = 0; i < 6; i++)
+					reg_mono_protect_copy[i] = curve_val[i];
+			} else {
+				if (kstrtoul(parm[2], 10, &val) < 0)
+					goto free_buf;
+
+				num = val;
+				if (kstrtoul(parm[3], 10, &val) < 0)
+					goto free_buf;
+
+				if (num > 5)
+					pr_info("error cmd\n");
+				else
+					reg_mono_protect_copy[num] = val;
+			}
+		} else if (!strcmp(parm[1], "reg_trend_wht_expand_lut8")) {
+			if (parm[2] == NULL) {
+				pr_info("error cmd\n");
+				goto free_buf;
+			} else if (!strcmp(parm[2], "all")) {
+				str_sapr_to_d(parm[3], curve_val, 5);
+				for (i = 0; i < 9; i++)
+					reg_trend_wht_expand_lut8_copy[i] =
+						curve_val[i];
+			} else {
+				if (kstrtoul(parm[2], 10, &val) < 0)
+					goto free_buf;
+
+				num = val;
+				if (kstrtoul(parm[3], 10, &val) < 0)
+					goto free_buf;
+
+				if (num > 8)
+					pr_info("error cmd\n");
+				else
+				reg_trend_wht_expand_lut8_copy[num] = val;
+			}
 		}
 	} else if (!strcmp(parm[0], "ro")) {
 		if (!strcmp(parm[1], "luma_avg4"))
@@ -2218,7 +2485,7 @@ static ssize_t amvecm_contrast_store(struct class *cla,
 static ssize_t amvecm_saturation_hue_show(struct class *cla,
 		struct class_attribute *attr, char *buf)
 {
-	if (get_cpu_type() == MESON_CPU_MAJOR_ID_TL1)
+	if (get_cpu_type() >= MESON_CPU_MAJOR_ID_G12A)
 		return sprintf(buf, "0x%x\n",
 			READ_VPP_REG(VPP_VADJ1_MA_MB_2));
 	else
@@ -2281,7 +2548,7 @@ void vpp_vd_adj1_saturation_hue(signed int sat_val,
 	mab =  ((ma & 0x3ff) << 16) | (mb & 0x3ff);
 	pr_info("\n[amvideo..] saturation_pre:%d hue_pre:%d mab:%x\n",
 			sat_val, hue_val, mab);
-	if (get_cpu_type() == MESON_CPU_MAJOR_ID_TL1)
+	if (get_cpu_type() >= MESON_CPU_MAJOR_ID_G12A)
 		WRITE_VPP_REG(VPP_VADJ1_MA_MB_2, mab);
 	else
 		WRITE_VPP_REG(VPP_VADJ1_MA_MB, mab);
@@ -2294,7 +2561,7 @@ void vpp_vd_adj1_saturation_hue(signed int sat_val,
 	md = (s16)((mab<<6)>>22);  /* md =	ma; */
 	mab = ((mc&0x3ff)<<16)|(md&0x3ff);
 
-	if (get_cpu_type() == MESON_CPU_MAJOR_ID_TL1) {
+	if (get_cpu_type() >= MESON_CPU_MAJOR_ID_G12A) {
 		WRITE_VPP_REG(VPP_VADJ1_MC_MD_2, mab);
 		WRITE_VPP_REG_BITS(VPP_VADJ1_MISC, 1, 0, 1);
 	} else {
@@ -2774,6 +3041,8 @@ static ssize_t set_gamma_pattern_show(struct class *cla,
 	pr_info("8bit: echo r g b > /sys/class/amvecm/gamma_pattern\n");
 	pr_info("10bit: echo r g b 0xa > /sys/class/amvecm/gamma_pattern\n");
 	pr_info("	r g b should be hex\n");
+	pr_info("disable gamma pattern:\n");
+	pr_info("echo disable > /sys/class/amvecm/gamma_pattern\n");
 	return 0;
 }
 
@@ -2801,6 +3070,14 @@ static ssize_t set_gamma_pattern_store(struct class *cls,
 		if (*token == '\0')
 			continue;
 		parm[n++] = token;
+	}
+
+	if (!strcmp(parm[0], "disable")) {
+		vecm_latch_flag |= FLAG_GAMMA_TABLE_R;
+		vecm_latch_flag |= FLAG_GAMMA_TABLE_G;
+		vecm_latch_flag |= FLAG_GAMMA_TABLE_B;
+		kfree(buf_orig);
+		return count;
 	}
 
 	if (*(parm + 3) != NULL) {
@@ -4761,16 +5038,36 @@ static void get_cm_hist(enum cm_hist_e hist_sel)
 	kfree(hist);
 }
 
-static void cm_init_config(void)
+static void cm_init_config(int bitdepth)
 {
-	WRITE_VPP_REG(VPP_CHROMA_ADDR_PORT, XVYCC_YSCP_REG);
-	WRITE_VPP_REG(VPP_CHROMA_DATA_PORT, 0x3ff0000);
-	WRITE_VPP_REG(VPP_CHROMA_ADDR_PORT, XVYCC_USCP_REG);
-	WRITE_VPP_REG(VPP_CHROMA_DATA_PORT, 0x3ff0000);
-	WRITE_VPP_REG(VPP_CHROMA_ADDR_PORT, XVYCC_VSCP_REG);
-	WRITE_VPP_REG(VPP_CHROMA_DATA_PORT, 0x3ff0000);
-	WRITE_VPP_REG(VPP_CHROMA_ADDR_PORT, LUMA_ADJ0_REG);
-	WRITE_VPP_REG(VPP_CHROMA_DATA_PORT, 0x40400);
+	if (bitdepth == 10) {
+		WRITE_VPP_REG(VPP_CHROMA_ADDR_PORT, XVYCC_YSCP_REG);
+		WRITE_VPP_REG(VPP_CHROMA_DATA_PORT, 0x3ff0000);
+		WRITE_VPP_REG(VPP_CHROMA_ADDR_PORT, XVYCC_USCP_REG);
+		WRITE_VPP_REG(VPP_CHROMA_DATA_PORT, 0x3ff0000);
+		WRITE_VPP_REG(VPP_CHROMA_ADDR_PORT, XVYCC_VSCP_REG);
+		WRITE_VPP_REG(VPP_CHROMA_DATA_PORT, 0x3ff0000);
+		WRITE_VPP_REG(VPP_CHROMA_ADDR_PORT, LUMA_ADJ0_REG);
+		WRITE_VPP_REG(VPP_CHROMA_DATA_PORT, 0x40400);
+	} else if (bitdepth == 12) {
+		WRITE_VPP_REG(VPP_CHROMA_ADDR_PORT, XVYCC_YSCP_REG);
+		WRITE_VPP_REG(VPP_CHROMA_DATA_PORT, 0xfff0000);
+		WRITE_VPP_REG(VPP_CHROMA_ADDR_PORT, XVYCC_USCP_REG);
+		WRITE_VPP_REG(VPP_CHROMA_DATA_PORT, 0xfff0000);
+		WRITE_VPP_REG(VPP_CHROMA_ADDR_PORT, XVYCC_VSCP_REG);
+		WRITE_VPP_REG(VPP_CHROMA_DATA_PORT, 0xfff0000);
+		WRITE_VPP_REG(VPP_CHROMA_ADDR_PORT, LUMA_ADJ0_REG);
+		WRITE_VPP_REG(VPP_CHROMA_DATA_PORT, 0x100400);
+	} else {
+		WRITE_VPP_REG(VPP_CHROMA_ADDR_PORT, XVYCC_YSCP_REG);
+		WRITE_VPP_REG(VPP_CHROMA_DATA_PORT, 0x3ff0000);
+		WRITE_VPP_REG(VPP_CHROMA_ADDR_PORT, XVYCC_USCP_REG);
+		WRITE_VPP_REG(VPP_CHROMA_DATA_PORT, 0x3ff0000);
+		WRITE_VPP_REG(VPP_CHROMA_ADDR_PORT, XVYCC_VSCP_REG);
+		WRITE_VPP_REG(VPP_CHROMA_DATA_PORT, 0x3ff0000);
+		WRITE_VPP_REG(VPP_CHROMA_ADDR_PORT, LUMA_ADJ0_REG);
+		WRITE_VPP_REG(VPP_CHROMA_DATA_PORT, 0x40400);
+	}
 }
 
 static const char *amvecm_debug_usage_str = {
@@ -4832,7 +5129,7 @@ static ssize_t amvecm_debug_store(struct class *cla,
 {
 	char *buf_orig, *parm[8] = {NULL};
 	long val = 0;
-	unsigned int mode_sel, color, color_mode;
+	unsigned int mode_sel, color, color_mode, i;
 
 	if (!buf)
 		return count;
@@ -5232,9 +5529,18 @@ static ssize_t amvecm_debug_store(struct class *cla,
 			cm_luma_bri_con(rd, bri, con, blk_lel);
 			pr_info("cm hist bri_con set success\n");
 		}
-	} else {
+	} else if (!strcmp(parm[0], "dump_overscan_table")) {
+		for (i = 0; i < TIMING_MAX; i++) {
+			pr_info("*****dump overscan_tab[%d]*****\n", i);
+			pr_info("hs:%d, he:%d, vs:%d, ve:%d, screen_mode:%d, afd:%d, flag:%d.\n",
+				overscan_table[i].hs, overscan_table[i].he,
+				overscan_table[i].vs, overscan_table[i].ve,
+				overscan_table[i].screen_mode,
+				overscan_table[i].afd_enable,
+				overscan_table[i].load_flag);
+		}
+	} else
 		pr_info("unsupport cmd\n");
-	}
 
 	kfree(buf_orig);
 	return count;
@@ -5376,9 +5682,14 @@ static ssize_t amvecm_get_hdr_type_store(struct class *cls,
 	return count;
 }
 
-static void lc_rd_reg(enum lc_reg_lut_e reg_sel)
+static void lc_rd_reg(enum lc_reg_lut_e reg_sel, int data_type)
 {
 	int i, tmp, tmp1, tmp2;
+	int lut_data[63] = {0};
+	char *stemp = NULL;
+
+	if (data_type == 1)
+		goto dump_as_string;
 
 	switch (reg_sel) {
 	case SATUR_LUT:
@@ -5449,6 +5760,70 @@ static void lc_rd_reg(enum lc_reg_lut_e reg_sel)
 	default:
 		break;
 	}
+	return;
+
+dump_as_string:
+	stemp = kzalloc(300, GFP_KERNEL);
+	if (!stemp)
+		return;
+	switch (reg_sel) {
+	case SATUR_LUT:
+		for (i = 0; i < 31 ; i++) {
+			tmp = READ_VPP_REG(SRSHARP1_LC_SAT_LUT_0_1 + i);
+			tmp1 = (tmp >> 16) & 0xfff;
+			tmp2 = tmp & 0xfff;
+			lut_data[2*i] = tmp1;
+			lut_data[2*i + 1] = tmp2;
+		}
+		tmp = READ_VPP_REG(SRSHARP1_LC_SAT_LUT_62);
+		lut_data[62] = tmp & 0xfff;
+		for (i = 0; i < 63 ; i++)
+			d_convert_str(lut_data[i],
+						i, stemp, 4, 10);
+		pr_info("%s\n", stemp);
+		break;
+	case YMINVAL_LMT:
+		for (i = 0; i < 6 ; i++) {
+			tmp = READ_VPP_REG(LC_CURVE_YMINVAL_LMT_0_1 + i);
+			tmp1 = (tmp >> 16) & 0x3ff;
+			tmp2 = tmp & 0x3ff;
+			lut_data[2*i] = tmp1;
+			lut_data[2*i + 1] = tmp2;
+		}
+		for (i = 0; i < 12 ; i++)
+			d_convert_str(lut_data[i],
+						i, stemp, 4, 10);
+		pr_info("%s\n", stemp);
+		break;
+	case YPKBV_YMAXVAL_LMT:
+		for (i = 0; i < 6 ; i++) {
+			tmp = READ_VPP_REG(LC_CURVE_YPKBV_YMAXVAL_LMT_0_1 + i);
+			tmp1 = (tmp >> 16) & 0x3ff;
+			tmp2 = tmp & 0x3ff;
+			lut_data[2*i] = tmp1;
+			lut_data[2*i + 1] = tmp2;
+		}
+		for (i = 0; i < 12 ; i++)
+			d_convert_str(lut_data[i],
+						i, stemp, 4, 10);
+		pr_info("%s\n", stemp);
+		break;
+	case YPKBV_RAT:
+		tmp = READ_VPP_REG(LC_CURVE_YPKBV_RAT);
+		lut_data[0] = (tmp>>24) & 0xff;
+		lut_data[1] = (tmp>>16) & 0xff;
+		lut_data[2] = (tmp>>8) & 0xff;
+		lut_data[3] = tmp & 0xff;
+		for (i = 0; i < 4 ; i++)
+			d_convert_str(lut_data[i],
+						i, stemp, 4, 10);
+		pr_info("%s\n", stemp);
+		break;
+	default:
+		break;
+	}
+	kfree(stemp);
+	return;
 }
 
 static void lc_wr_reg(int *p, enum lc_reg_lut_e reg_sel)
@@ -5499,6 +5874,44 @@ static void lc_wr_reg(int *p, enum lc_reg_lut_e reg_sel)
 	default:
 		break;
 	}
+}
+
+unsigned int lc_saturation_curv[63];
+unsigned int lc_yminval_lmt_curv[12];
+unsigned int lc_ypkbv_ymaxval_lmt_curv[12];
+unsigned int lc_ypkbv_ratio_curv[4];
+
+void lc_load_curve(struct ve_lc_curve_parm_s *p)
+{
+	unsigned int i;
+
+	/*load lc parms*/
+	lc_alg_parm.dbg_parm0 = p->param[lc_dbg_parm0];
+	lc_alg_parm.dbg_parm1 = p->param[lc_dbg_parm1];
+	lc_alg_parm.dbg_parm2 = p->param[lc_dbg_parm2];
+	lc_alg_parm.dbg_parm3 = p->param[lc_dbg_parm3];
+	lc_alg_parm.dbg_parm4 = p->param[lc_dbg_parm4];
+
+	/*load lc curve*/
+	for (i = 0; i < 63; i++)
+		lc_saturation_curv[i] = p->ve_lc_saturation[i];
+	for (i = 0; i < 12; i++) {
+		lc_yminval_lmt_curv[i] =
+			p->ve_lc_yminval_lmt[i];
+		lc_ypkbv_ymaxval_lmt_curv[i] =
+			p->ve_lc_ypkbv_ymaxval_lmt[i];
+	}
+	for (i = 0; i < 4; i++)
+		lc_ypkbv_ratio_curv[i] = p->ve_lc_ypkbv_ratio[i];
+
+	/*load lc_staturation curve*/
+	lc_wr_reg(lc_saturation_curv, 0x1);
+	/*load lc_yminval_lmt*/
+	lc_wr_reg(lc_yminval_lmt_curv, 0x2);
+	/*load lc_ypkbv_ymaxval_lmt*/
+	lc_wr_reg(lc_ypkbv_ymaxval_lmt_curv, 0x4);
+	/*load lc_ypkbV_ratio*/
+	lc_wr_reg(lc_ypkbv_ratio_curv, 0x8);
 }
 
 static ssize_t amvecm_lc_show(struct class *cla,
@@ -5552,10 +5965,16 @@ static ssize_t amvecm_lc_store(struct class *cls,
 	char *buf_orig, *parm[8] = {NULL};
 	int reg_lut[63] = {0};
 	enum lc_reg_lut_e reg_sel;
+	int h, v, i, start_point;
 	long val = 0;
+	char *stemp = NULL;
+	int curve_val[6] = {0};
 
 	if (!buf)
 		return count;
+	stemp = kzalloc(100, GFP_KERNEL);
+	if (!stemp)
+		return 0;
 
 	buf_orig = kstrdup(buf, GFP_KERNEL);
 	parse_param_amvecm(buf_orig, (char **)&parm);
@@ -5567,6 +5986,8 @@ static ssize_t amvecm_lc_store(struct class *cls,
 			lc_en = 0;
 		else
 			pr_info("unsupprt cmd!\n");
+	} else if (!strcmp(parm[0], "lc_version")) {
+		pr_info("lc driver version :  %s\n", LC_VER);
 	} else if (!strcmp(parm[0], "lc_dbg")) {
 		if (kstrtoul(parm[1], 16, &val) < 0)
 			goto free_buf;
@@ -5578,25 +5999,39 @@ static ssize_t amvecm_lc_store(struct class *cls,
 			lc_demo_mode = 0;
 		else
 			pr_info("unsupprt cmd!\n");
-	} else if (!strcmp(parm[0], "lc_dump_reg")) {
+	} else if (!strcmp(parm[0], "dump_lut_data")) {
 		if (kstrtoul(parm[1], 16, &val) < 0)
 			goto free_buf;
 		reg_sel = val;
 		if (reg_sel == SATUR_LUT)
-			lc_rd_reg(SATUR_LUT);
+			lc_rd_reg(SATUR_LUT, 0);
 		else if (reg_sel == YMINVAL_LMT)
-			lc_rd_reg(YMINVAL_LMT);
+			lc_rd_reg(YMINVAL_LMT, 0);
 		else if (reg_sel == YPKBV_YMAXVAL_LMT)
-			lc_rd_reg(YPKBV_YMAXVAL_LMT);
+			lc_rd_reg(YPKBV_YMAXVAL_LMT, 0);
 		else if (reg_sel == YPKBV_RAT)
-			lc_rd_reg(YPKBV_RAT);
+			lc_rd_reg(YPKBV_RAT, 0);
 		else if (reg_sel == YPKBV_SLP_LMT)
-			lc_rd_reg(YPKBV_SLP_LMT);
+			lc_rd_reg(YPKBV_SLP_LMT, 0);
 		else if (reg_sel == CNTST_LMT)
-			lc_rd_reg(CNTST_LMT);
+			lc_rd_reg(CNTST_LMT, 0);
 		else
 			pr_info("unsupprt cmd!\n");
-	} else if (!strcmp(parm[0], "lc_wr_reg")) {
+	} else if (!strcmp(parm[0], "dump_lut_str")) {
+		if (kstrtoul(parm[1], 16, &val) < 0)
+			goto free_buf;
+		reg_sel = val;
+		if (reg_sel == SATUR_LUT)
+			lc_rd_reg(SATUR_LUT, 1);
+		else if (reg_sel == YMINVAL_LMT)
+			lc_rd_reg(YMINVAL_LMT, 1);
+		else if (reg_sel == YPKBV_YMAXVAL_LMT)
+			lc_rd_reg(YPKBV_YMAXVAL_LMT, 1);
+		else if (reg_sel == YPKBV_RAT)
+			lc_rd_reg(YPKBV_RAT, 1);
+		else
+			pr_info("unsupprt cmd!\n");
+	} else if (!strcmp(parm[0], "lc_wr_lut")) {
 		if (kstrtoul(parm[1], 16, &val) < 0)
 			goto free_buf;
 		reg_sel = val;
@@ -5718,30 +6153,131 @@ static ssize_t amvecm_lc_store(struct class *cls,
 			goto free_buf;
 		amlc_iir_debug_en = val;
 		pr_info("setting value: %d\n", amlc_iir_debug_en);
-	} else
+	} else if (!strcmp(parm[0], "get_blk_region")) {
+		val = READ_VPP_REG(LC_CURVE_HV_NUM);
+		h = (val >> 8) & 0x1f;
+		v = (val) & 0x1f;
+		if (!strcmp(parm[1], "htotal"))
+			pr_info("%d\n", h);
+		else if (!strcmp(parm[1], "vtotal"))
+			pr_info("%d\n", v);
+		else
+			pr_info("unsupprt cmd!\n");
+	} else if (!strcmp(parm[0], "get_hist")) {
+		if (kstrtoul(parm[1], 10, &val) < 0)
+			goto free_buf;
+		h = val;
+		if (kstrtoul(parm[2], 10, &val) < 0)
+			goto free_buf;
+		v = val;
+		if ((h > 11) || (v > 7))
+			goto free_buf;
+		start_point = (12*v+h)*17;
+		for (i = 0; i < 17; i++)
+			d_convert_str(lc_hist[start_point + i] >> 4,
+						i, stemp, 4, 10);
+		pr_info("%s\n", stemp);
+	} else if (!strcmp(parm[0], "get_curve")) {
+		if (kstrtoul(parm[1], 10, &val) < 0)
+			goto free_buf;
+		h = val;
+		if (kstrtoul(parm[2], 10, &val) < 0)
+			goto free_buf;
+		v = val;
+		if ((h > 11) || (v > 7))
+			goto free_buf;
+		start_point = (12*v+h)*6;
+		for (i = 0; i < 6; i++)
+			d_convert_str(curve_nodes_cur[start_point + i],
+						i, stemp, 4, 10);
+		pr_info("%s\n", stemp);
+	} else if (!strcmp(parm[0], "set_curve")) {
+		if (parm[3] == NULL)
+			goto free_buf;
+		if (kstrtoul(parm[1], 10, &val) < 0)
+			goto free_buf;
+		h = val;
+		if (kstrtoul(parm[2], 10, &val) < 0)
+			goto free_buf;
+		v = val;
+		if ((h > 11) || (v > 7))
+			goto free_buf;
+		start_point = (12*v+h)*6;
+		str_sapr_to_d(parm[3], curve_val, 5);
+		for (i = 0; i < 6; i++)
+			curve_nodes_cur[start_point + i]
+			= curve_val[i];
+	} else if (!strcmp(parm[0], "stop_refresh"))
+		lc_curve_fresh = false;
+	else if (!strcmp(parm[0], "refresh_curve"))
+		lc_curve_fresh = true;
+	else
 		pr_info("unsupprt cmd!\n");
 
 	kfree(buf_orig);
+	kfree(stemp);
 	return count;
 
 free_buf:
 	pr_info("Missing parameters !\n");
 	kfree(buf_orig);
+	kfree(stemp);
 	return -EINVAL;
 }
 
+static void def_hdr_sdr_mode(void)
+{
+	sdr_mode = 0;
+}
 
 /* #if (MESON_CPU_TYPE == MESON_CPU_TYPE_MESONG9TV) */
 void init_pq_setting(void)
 {
-	if (get_cpu_type() == MESON_CPU_MAJOR_ID_TL1) {
+
+	int bitdepth;
+
+	if (is_meson_gxtvbb_cpu() || is_meson_txl_cpu() ||
+		is_meson_txlx_cpu() || is_meson_txhd_cpu() ||
+		is_meson_tl1_cpu() || is_meson_tm2_cpu())
+		goto tvchip_pq_setting;
+	else if (is_meson_g12a_cpu() || is_meson_g12b_cpu() ||
+		is_meson_sm1_cpu()) {
+		sr_offset[0] = SR0_OFFSET;
+		bitdepth = 12;
+		/*confirm with vlsi-Lunhai.Chen, for G12A/G12B,
+		 *VPP_GCLK_CTRL1 must enable
+		 */
+		WRITE_VPP_REG_BITS(VPP_GCLK_CTRL1, 0xf, 0, 4);
+		cm_init_config(bitdepth);
+		/*dnlp off*/
+		WRITE_VPP_REG_BITS(VPP_VE_ENABLE_CTRL, 0,
+			 DNLP_EN_BIT, DNLP_EN_WID);
+		/*sr0  chroma filter bypass*/
+		WRITE_VPP_REG(SRSHARP0_SHARP_SR2_CBIC_HCOEF0 + sr_offset[0],
+			0x4000);
+		WRITE_VPP_REG(SRSHARP0_SHARP_SR2_CBIC_VCOEF0 + sr_offset[0],
+			0x4000);
+
+		/*kernel sdr2hdr match uboot setting*/
+		def_hdr_sdr_mode();
+	}
+	return;
+
+tvchip_pq_setting:
+	if (cpu_after_eq(MESON_CPU_MAJOR_ID_TL1)) {
+		if (is_meson_tl1_cpu())
+			bitdepth = 10;
+		else if (is_meson_tm2_cpu())
+			bitdepth = 12;
+		else
+			bitdepth = 12;
 		/*sr0 & sr1 register shfit*/
 		sr_offset[0] = SR0_OFFSET;
 		sr_offset[1] = SR1_OFFSET;
 		/*cm register init*/
-		cm_init_config();
+		cm_init_config(bitdepth);
 		/*lc init*/
-		lc_init();
+		lc_init(bitdepth);
 	}
 	/*probe close sr0 peaking for switch on video*/
 	WRITE_VPP_REG_BITS(VPP_SRSHARP0_CTRL, 1, 0, 1);
@@ -6177,11 +6713,7 @@ static int aml_vecm_probe(struct platform_device *pdev)
 	/* register vout client */
 	vout_register_client(&vlock_notifier_nb);
 
-	/* #if (MESON_CPU_TYPE == MESON_CPU_TYPE_MESONG9TV) */
-	if (is_meson_gxtvbb_cpu() || is_meson_txl_cpu() ||
-		is_meson_txlx_cpu() || is_meson_txhd_cpu() ||
-		is_meson_tl1_cpu())
-		init_pq_setting();
+	init_pq_setting();
 	/* #endif */
 	vpp_get_hist_en();
 
@@ -6205,12 +6737,9 @@ static int aml_vecm_probe(struct platform_device *pdev)
 	else
 		hdr_flag = (1 << 0) | (1 << 1) | (0 << 2) | (0 << 3);
 
-	if (is_meson_g12a_cpu() || is_meson_g12b_cpu())
-		sdr_mode = 2;
-
-	vlock_status_init();
 	hdr_init(&amvecm_dev.hdr_d);
 	aml_vecm_dt_parse(pdev);
+	vlock_status_init();
 
 	probe_ok = 1;
 	pr_info("%s: ok\n", __func__);

@@ -44,6 +44,9 @@
 #include <linux/amlogic/media/codec_mm/configs.h>
 #include "../utils/firmware.h"
 
+#include <trace/events/meson_atrace.h>
+
+
 #define MEM_NAME "codec_mmjpeg"
 
 #define DRIVER_NAME "ammvdec_mjpeg"
@@ -244,6 +247,7 @@ static irqreturn_t vmjpeg_isr(struct vdec_s *vdec, int irq)
 	struct vframe_s *vf = NULL;
 	u32 index, offset = 0, pts;
 	u64 pts_us64;
+	u32 frame_size;
 
 	if (!hw)
 		return IRQ_HANDLED;
@@ -287,7 +291,8 @@ static irqreturn_t vmjpeg_isr(struct vdec_s *vdec, int irq)
 	} else {
 		offset = READ_VREG(MREG_FRAME_OFFSET);
 		if (pts_lookup_offset_us64
-			(PTS_TYPE_VIDEO, offset, &pts, 3000,
+			(PTS_TYPE_VIDEO, offset, &pts,
+			&frame_size, 3000,
 			&pts_us64) == 0) {
 			vf->pts = pts;
 			vf->pts_us64 = pts_us64;
@@ -300,12 +305,13 @@ static irqreturn_t vmjpeg_isr(struct vdec_s *vdec, int irq)
 	hw->vfbuf_use[index]++;
 
 	kfifo_put(&hw->display_q, (const struct vframe_s *)vf);
-
+	ATRACE_COUNTER(MODULE_NAME, vf->pts);
 	hw->frame_num++;
 	mmjpeg_debug_print(DECODE_ID(hw), PRINT_FRAME_NUM,
 		"%s:frame num:%d,pts=%d,pts64=%lld. dur=%d\n",
 	__func__, hw->frame_num,
 	vf->pts, vf->pts_us64, vf->duration);
+	vdec->vdec_fps_detec(vdec->id);
 	vf_notify_receiver(vdec->vf_provider_name,
 			VFRAME_EVENT_PROVIDER_VFRAME_READY,
 			NULL);
@@ -1033,6 +1039,7 @@ static void vmjpeg_work(struct work_struct *work)
 			kfifo_len(&hw->display_q));
 	if (hw->dec_result == DEC_RESULT_DONE) {
 		vdec_vframe_dirty(hw_to_vdec(hw), hw->chunk);
+		hw->chunk = NULL;
 	} else if (hw->dec_result == DEC_RESULT_AGAIN) {
 		/*
 			stream base: stream buf empty or timeout
@@ -1062,6 +1069,7 @@ static void vmjpeg_work(struct work_struct *work)
 		}
 		hw->eos = 1;
 		vdec_vframe_dirty(hw_to_vdec(hw), hw->chunk);
+		hw->chunk = NULL;
 		vdec_clean_input(hw_to_vdec(hw));
 	}
 	if (hw->stat & STAT_VDEC_RUN) {
@@ -1130,6 +1138,7 @@ static int ammvdec_mjpeg_probe(struct platform_device *pdev)
 
 	hw = (struct vdec_mjpeg_hw_s *)devm_kzalloc(&pdev->dev,
 		sizeof(struct vdec_mjpeg_hw_s), GFP_KERNEL);
+	hw =  vzalloc(sizeof(struct vdec_mjpeg_hw_s));
 	if (hw == NULL) {
 		pr_info("\nammvdec_mjpeg device data allocation failed\n");
 		return -ENOMEM;
@@ -1173,7 +1182,10 @@ static int ammvdec_mjpeg_probe(struct platform_device *pdev)
 			1920, 1080, 60);
 	if (vmjpeg_init(pdata) < 0) {
 		pr_info("ammvdec_mjpeg init failed.\n");
-		devm_kfree(&pdev->dev, (void *)hw);
+		if (hw) {
+			vfree(hw);
+			hw = NULL;
+		}
 		pdata->dec_status = NULL;
 		return -ENODEV;
 	}
@@ -1209,7 +1221,10 @@ static int ammvdec_mjpeg_remove(struct platform_device *pdev)
 			vdec->free_canvas_ex(hw->buffer_spec[i].v_canvas_index, vdec->id);
 		}
 	}
-
+	if (hw) {
+		vfree(hw);
+		hw = NULL;
+	}
 	pr_info("%s\n", __func__);
 	return 0;
 }

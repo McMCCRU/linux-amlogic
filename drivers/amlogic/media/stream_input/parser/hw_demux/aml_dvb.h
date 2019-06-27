@@ -54,6 +54,8 @@
 #include <linux/of.h>
 #include <linux/pinctrl/consumer.h>
 
+#include "aml_demod_gt.h"
+
 #define TS_IN_COUNT       4
 #define S2P_COUNT         3
 #define ASYNCFIFO_COUNT   3
@@ -92,6 +94,7 @@ enum aml_ts_source_t {
 	AM_TS_SRC_S_TS2,
 
 	AM_TS_SRC_HIU,
+	AM_TS_SRC_HIU1,
 	AM_TS_SRC_DMX0,
 	AM_TS_SRC_DMX1,
 	AM_TS_SRC_DMX2
@@ -124,27 +127,32 @@ struct aml_filter {
 
 #define DVBCSA_MODE 0
 #define CIPLUS_MODE 1
-#define AES_CBC_MODE 0
-#define AES_ECB_MODE 1
+#define CBC_MODE 0
+#define ECB_MODE 1
+#define IDSA_MODE 2
 
 #define DSC_SET_EVEN     1
 #define DSC_SET_ODD      2
 #define DSC_SET_AES_EVEN 4
 #define DSC_SET_AES_ODD  8
 #define DSC_FROM_KL      16
+#define DSC_SET_SM4_EVEN 32
+#define DSC_SET_SM4_ODD  64
+
+#define DSC_KEY_SIZE_MAX 16
 
 struct aml_dsc_channel {
 	int                  pid;
-	u8                   even[8];
-	u8                   odd[8];
-	u8                   aes_even[16];
-	u8                   aes_odd[16];
+	u8                   even[DSC_KEY_SIZE_MAX];
+	u8                   odd[DSC_KEY_SIZE_MAX];
+	u8                   even_iv[DSC_KEY_SIZE_MAX];
+	u8                   odd_iv[DSC_KEY_SIZE_MAX];
 	int                  used;
-	int                  flags;
+	int                  set;
 	int                  id;
 	struct aml_dsc      *dsc;
 	int                  work_mode;
-	int                  aes_mode;
+	int                  mode;
 };
 
 struct aml_dsc {
@@ -292,6 +300,12 @@ struct aml_swfilter {
 	int    track_dmx;
 };
 
+struct aml_tuner {
+	struct tuner_config cfg;
+	unsigned int i2c_adapter_id;
+	struct i2c_adapter *i2c_adp;
+};
+
 struct aml_dvb {
 	struct dvb_device    dvb_dev;
 	int ts_in_total_count;
@@ -314,6 +328,11 @@ struct aml_dvb {
 	int                  dmx_watchdog_disable[DMX_DEV_COUNT];
 	struct aml_swfilter  swfilter;
 	int	ts_out_invert;
+
+	unsigned int tuner_num;
+	unsigned int tuner_cur;
+	struct aml_tuner *tuners;
+	bool tuner_attached;
 };
 
 
@@ -356,6 +375,8 @@ extern int aml_asyncfifo_hw_reset(struct aml_asyncfifo *afifo);
 /*Get the Audio & Video PTS*/
 extern u32 aml_dmx_get_video_pts(struct aml_dvb *dvb);
 extern u32 aml_dmx_get_audio_pts(struct aml_dvb *dvb);
+extern u32 aml_dmx_get_video_pts_bit32(struct aml_dvb *dvb);
+extern u32 aml_dmx_get_audio_pts_bit32(struct aml_dvb *dvb);
 extern u32 aml_dmx_get_first_video_pts(struct aml_dvb *dvb);
 extern u32 aml_dmx_get_first_audio_pts(struct aml_dvb *dvb);
 

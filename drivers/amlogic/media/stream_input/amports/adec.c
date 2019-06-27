@@ -121,13 +121,14 @@ static ssize_t datawidth_show(struct class *class,
 static ssize_t pts_show(struct class *class, struct class_attribute *attr,
 						char *buf)
 {
-	u32 pts;
+	u32 pts, frame_size;
 	u32 pts_margin = 0;
 
 	if (astream_dev->samplerate <= 12000)
 		pts_margin = 512;
 
-	if (INFO_VALID && (pts_lookup(PTS_TYPE_AUDIO, &pts, pts_margin) >= 0))
+	if (INFO_VALID && (pts_lookup(PTS_TYPE_AUDIO, &pts,
+			&frame_size, pts_margin) >= 0))
 		return sprintf(buf, "0x%x\n", pts);
 	else
 		return sprintf(buf, "%s\n", na_string);
@@ -159,6 +160,9 @@ static struct class astream_class = {
 #define IO_AOBUS_PHY_BASE 0xc8100000ULL
 #define CBUS_REG_OFFSET(reg) ((reg) << 2)
 #define IO_SECBUS_PHY_BASE 0xda000000ULL
+
+
+#define IO_AOBUS_PHY_BASE_AFTER_G12A 0xff800000ULL
 
 static struct uio_info astream_uio_info = {
 	.name = "astream_uio",
@@ -358,9 +362,11 @@ s32 astream_dev_register(void)
 		astream_dev->offset = -0x100;
 
 		/*need to offset -0x180 in g12a.*/
-		if (AM_MESON_CPU_MAJOR_ID_G12A <= get_cpu_major_id())
+		if (AM_MESON_CPU_MAJOR_ID_G12A <= get_cpu_major_id()) {
 			astream_dev->offset = -0x180;
-
+			/* after G12A chip, the aobus base addr changed */
+			astream_uio_info.mem[4].addr = IO_AOBUS_PHY_BASE_AFTER_G12A;
+		}
 		astream_uio_info.mem[0].addr =
 			(cbus_base + CBUS_REG_OFFSET(AIU_AIFIFO_CTRL +
 			astream_dev->offset)) & (PAGE_MASK);

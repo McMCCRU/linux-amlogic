@@ -95,7 +95,7 @@ static unsigned char edid_14[] = {
 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3B,
 };
 
-/* 1.4 edid,support dobly,MAT,DTS,ATMOS*/
+/* 1.4 edid,support dolby,MAT,DTS,ATMOS*/
 static unsigned char edid_14_aud[] = {
 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00,
 0x05, 0xAC, 0x30, 0x00, 0x01, 0x00, 0x00, 0x00,
@@ -1121,8 +1121,7 @@ unsigned char get_atmos_offset(unsigned char *p_edid)
 	do {
 		tag_data = p_edid[tag_offset];
 		if ((tag_data & 0xE0) == 0x20) {
-			if (log_level & EDID_LOG)
-				rx_pr("audio_");
+			rx_pr("audio_\n");
 			aud_length = tag_data & 0x1F;
 			break;
 		}
@@ -1149,8 +1148,7 @@ unsigned char rx_edid_update_atmos(unsigned char *p_edid)
 			p_edid[offset] = 1;
 		else
 			p_edid[offset] = 0;
-		if (log_level & EDID_LOG)
-			rx_pr("offset = %d\n", offset);
+		rx_pr("offset = %d\n", offset);
 	}
 	return 0;
 }

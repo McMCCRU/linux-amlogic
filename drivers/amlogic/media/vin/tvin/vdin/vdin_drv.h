@@ -45,7 +45,7 @@
 #include "vdin_vf.h"
 #include "vdin_regs.h"
 
-#define VDIN_VER "Ref.2019/01/03"
+#define VDIN_VER "Ref.2019/03/01"
 
 /*the counter of vdin*/
 #define VDIN_MAX_DEVS			2
@@ -205,6 +205,7 @@ struct vdin_dev_s {
 
 	struct timer_list timer;
 	spinlock_t isr_lock;
+	spinlock_t hist_lock;
 	struct mutex fe_lock;
 	struct clk *msr_clk;
 	unsigned int msr_clk_val;
@@ -328,6 +329,7 @@ struct vdin_dev_s {
 	 * 1: use afbce non-mmu mode: head/body addr set by code
 	 * 2: use afbce mmu mode: head set by code, body addr assigning by hw
 	 */
+	unsigned int afbce_flag;
 	unsigned int afbce_mode;
 	unsigned int afbce_lossy_en;
 	unsigned int canvas_config_mode;
@@ -348,6 +350,25 @@ struct vdin_dev_s {
 
 	struct dentry *dbg_root;	/*dbg_fs*/
 };
+
+struct vdin_hist_s {
+	ulong sum;
+	int width;
+	int height;
+	int ave;
+};
+
+struct vdin_v4l2_param_s {
+	int width;
+	int height;
+	int fps;
+};
+
+extern unsigned int tl1_vdin1_preview_flag;
+extern unsigned int vdin_afbc_preview_force_drop_frame_cnt;
+extern unsigned int vdin_afbc_force_drop_frame_cnt;
+extern unsigned int max_ignore_frame_cnt;
+extern unsigned int skip_frame_debug;
 
 extern struct vframe_provider_s *vf_get_provider_by_name(
 		const char *provider_name);
@@ -385,6 +406,8 @@ extern bool is_dolby_vision_enable(void);
 
 extern void vdin_debugfs_init(struct vdin_dev_s *vdevp);
 extern void vdin_debugfs_exit(struct vdin_dev_s *vdevp);
+
+extern bool vlock_get_phlock_flag(void);
 
 #endif /* __TVIN_VDIN_DRV_H */
 

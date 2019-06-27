@@ -390,7 +390,6 @@ struct vframe_s {
 	u64 ready_jiffies64;	/* ready from decode on  jiffies_64 */
 	long long ready_clock[5];/*ns*/
 	long long ready_clock_hist[2];/*ns*/
-	atomic_t use_cnt;
 	u32 frame_dirty;
 	/*
 	 *prog_proc_config:
@@ -411,6 +410,9 @@ struct vframe_s {
 	struct vframe_pic_mode_s pic_mode;
 
 	unsigned long v4l_mem_handle;
+
+	u32 sar_width;
+	u32 sar_height;
 } /*vframe_t */;
 
 #if 0

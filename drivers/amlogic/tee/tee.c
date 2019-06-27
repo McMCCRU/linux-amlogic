@@ -186,6 +186,22 @@ int tee_load_video_fw(uint32_t index, uint32_t vdec)
 }
 EXPORT_SYMBOL(tee_load_video_fw);
 
+static int tee_load_firmware(uint32_t index, uint32_t vdec, bool is_swap)
+{
+	struct arm_smccc_res res;
+
+	arm_smccc_smc(TEE_SMC_LOAD_VIDEO_FW,
+		index, vdec, is_swap, 0, 0, 0, 0, &res);
+
+	return res.a0;
+}
+
+int tee_load_video_fw_swap(uint32_t index, uint32_t vdec, bool is_swap)
+{
+	return tee_load_firmware(index, vdec, is_swap);
+}
+EXPORT_SYMBOL(tee_load_video_fw_swap);
+
 bool tee_enabled(void)
 {
 	struct arm_smccc_res res;

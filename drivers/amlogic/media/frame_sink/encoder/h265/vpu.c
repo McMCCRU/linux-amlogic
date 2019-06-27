@@ -385,7 +385,9 @@ static s32 vpu_open(struct inode *inode, struct file *filp)
 		amports_switch_gate("vdec", 1);
 		spin_lock_irqsave(&s_vpu_lock, flags);
 		WRITE_AOREG(AO_RTI_GEN_PWR_SLEEP0,
-			READ_AOREG(AO_RTI_GEN_PWR_SLEEP0) & ~(0x3<<24));
+			READ_AOREG(AO_RTI_GEN_PWR_SLEEP0) &
+			(get_cpu_type() == MESON_CPU_MAJOR_ID_SM1
+			? ~0x8 : ~(0x3<<24)));
 		udelay(10);
 
 		if (get_cpu_type() <= MESON_CPU_MAJOR_ID_TXLX) {
@@ -418,7 +420,9 @@ static s32 vpu_open(struct inode *inode, struct file *filp)
 		WRITE_VREG(DOS_MEM_PD_WAVE420L, 0x0);
 
 		WRITE_AOREG(AO_RTI_GEN_PWR_ISO0,
-			READ_AOREG(AO_RTI_GEN_PWR_ISO0) & ~(0x3<<12));
+			READ_AOREG(AO_RTI_GEN_PWR_ISO0) &
+			(get_cpu_type() == MESON_CPU_MAJOR_ID_SM1
+			? ~0x8 : ~(0x3<<12)));
 		udelay(10);
 
 		spin_unlock_irqrestore(&s_vpu_lock, flags);
@@ -702,6 +706,9 @@ static long vpu_ioctl(struct file *filp, u32 cmd, ulong arg)
 				ret = -ETIME;
 				break;
 			}
+			enc_pr(LOG_INFO,
+			       "s_interrupt_flag(%d), reason(0x%08lx)\n",
+			       s_interrupt_flag, dev->interrupt_reason);
 			if (dev->interrupt_reason & (1 << W4_INT_ENC_PIC)) {
 				u32 start, end, size, core = 0;
 
@@ -1332,6 +1339,11 @@ static s32 vpu_release(struct inode *inode, struct file *filp)
 		vpu_free_instances(filp);
 		s_vpu_drv_context.open_count--;
 		if (s_vpu_drv_context.open_count == 0) {
+			enc_pr(LOG_INFO,
+			       "vpu_release: s_interrupt_flag(%d), reason(0x%08lx)\n",
+			       s_interrupt_flag, s_vpu_drv_context.interrupt_reason);
+			s_vpu_drv_context.interrupt_reason = 0;
+			s_interrupt_flag = 0;
 			if (s_instance_pool.base) {
 				enc_pr(LOG_DEBUG, "free instance pool\n");
 				vfree((const void *)s_instance_pool.base);
@@ -1360,7 +1372,9 @@ static s32 vpu_release(struct inode *inode, struct file *filp)
 			}
 			spin_lock_irqsave(&s_vpu_lock, flags);
 			WRITE_AOREG(AO_RTI_GEN_PWR_ISO0,
-				READ_AOREG(AO_RTI_GEN_PWR_ISO0) | (0x3<<12));
+				READ_AOREG(AO_RTI_GEN_PWR_ISO0) |
+				(get_cpu_type() == MESON_CPU_MAJOR_ID_SM1
+				? 0x8 : (0x3<<12)));
 			udelay(10);
 
 			WRITE_VREG(DOS_MEM_PD_WAVE420L, 0xffffffff);
@@ -1368,7 +1382,9 @@ static s32 vpu_release(struct inode *inode, struct file *filp)
 			vpu_clk_config(0);
 #endif
 			WRITE_AOREG(AO_RTI_GEN_PWR_SLEEP0,
-				READ_AOREG(AO_RTI_GEN_PWR_SLEEP0) | (0x3<<24));
+				READ_AOREG(AO_RTI_GEN_PWR_SLEEP0) |
+				(get_cpu_type() == MESON_CPU_MAJOR_ID_SM1
+				? 0x8 : (0x3<<24)));
 			udelay(10);
 			spin_unlock_irqrestore(&s_vpu_lock, flags);
 			amports_switch_gate("vdec", 0);
@@ -1863,72 +1879,73 @@ static s32 vpu_resume(struct platform_device *pdev)
 	enc_pr(LOG_DEBUG, "vpu_resume\n");
 
 	vpu_clk_config(1);
-
-	for (core = 0; core < MAX_NUM_VPU_CORE; core++) {
-		if (s_bit_firmware_info[core].size == 0)
-			continue;
-		code_base = s_common_memory.phys_addr;
-		/* ALIGN TO 4KB */
-		code_size = (s_common_memory.size & ~0xfff);
-		if (code_size < s_bit_firmware_info[core].size * 2)
-			goto DONE_WAKEUP;
-
-		/*---- LOAD BOOT CODE */
-		for (i = 0; i < 512; i += 2) {
-			val = s_bit_firmware_info[core].bit_code[i];
-			val |= (s_bit_firmware_info[core].bit_code[i+1] << 16);
-			WriteVpu(code_base+(i*2), val);
-		}
-
-		regVal = 0;
-		WriteVpuRegister(W4_PO_CONF, regVal);
-
-		/* Reset All blocks */
-		regVal = 0x7ffffff;
-		WriteVpuRegister(W4_VPU_RESET_REQ, regVal);
-
-		/* Waiting reset done */
-		while (ReadVpuRegister(W4_VPU_RESET_STATUS)) {
-			if (time_after(jiffies, timeout))
+	if (s_vpu_open_ref_count > 0) {
+		for (core = 0; core < MAX_NUM_VPU_CORE; core++) {
+			if (s_bit_firmware_info[core].size == 0)
+				continue;
+			code_base = s_common_memory.phys_addr;
+			/* ALIGN TO 4KB */
+			code_size = (s_common_memory.size & ~0xfff);
+			if (code_size < s_bit_firmware_info[core].size * 2)
 				goto DONE_WAKEUP;
-		}
 
-		WriteVpuRegister(W4_VPU_RESET_REQ, 0);
+			/*---- LOAD BOOT CODE */
+			for (i = 0; i < 512; i += 2) {
+				val = s_bit_firmware_info[core].bit_code[i];
+				val |= (s_bit_firmware_info[core].bit_code[i+1] << 16);
+				WriteVpu(code_base+(i*2), val);
+			}
 
-		/* remap page size */
-		remap_size = (code_size >> 12) & 0x1ff;
-		regVal = 0x80000000 | (W4_REMAP_CODE_INDEX<<12)
-			| (0 << 16) | (1<<11) | remap_size;
-		WriteVpuRegister(W4_VPU_REMAP_CTRL, regVal);
-		/* DO NOT CHANGE! */
-		WriteVpuRegister(W4_VPU_REMAP_VADDR, 0x00000000);
-		WriteVpuRegister(W4_VPU_REMAP_PADDR, code_base);
-		WriteVpuRegister(W4_ADDR_CODE_BASE, code_base);
-		WriteVpuRegister(W4_CODE_SIZE, code_size);
-		WriteVpuRegister(W4_CODE_PARAM, 0);
-		WriteVpuRegister(W4_INIT_VPU_TIME_OUT_CNT, timeout);
-		WriteVpuRegister(W4_HW_OPTION, hwOption);
+			regVal = 0;
+			WriteVpuRegister(W4_PO_CONF, regVal);
 
-		/* Interrupt */
-		regVal = (1 << W4_INT_DEC_PIC_HDR);
-		regVal |= (1 << W4_INT_DEC_PIC);
-		regVal |= (1 << W4_INT_QUERY_DEC);
-		regVal |= (1 << W4_INT_SLEEP_VPU);
-		regVal |= (1 << W4_INT_BSBUF_EMPTY);
-		regVal = 0xfffffefe;
-		WriteVpuRegister(W4_VPU_VINT_ENABLE, regVal);
-		Wave4BitIssueCommand(core, W4_CMD_INIT_VPU);
-		WriteVpuRegister(W4_VPU_REMAP_CORE_START, 1);
-		while (ReadVpuRegister(W4_VPU_BUSY_STATUS)) {
-			if (time_after(jiffies, timeout))
+			/* Reset All blocks */
+			regVal = 0x7ffffff;
+			WriteVpuRegister(W4_VPU_RESET_REQ, regVal);
+
+			/* Waiting reset done */
+			while (ReadVpuRegister(W4_VPU_RESET_STATUS)) {
+				if (time_after(jiffies, timeout))
+					goto DONE_WAKEUP;
+			}
+
+			WriteVpuRegister(W4_VPU_RESET_REQ, 0);
+
+			/* remap page size */
+			remap_size = (code_size >> 12) & 0x1ff;
+			regVal = 0x80000000 | (W4_REMAP_CODE_INDEX<<12)
+				| (0 << 16) | (1<<11) | remap_size;
+			WriteVpuRegister(W4_VPU_REMAP_CTRL, regVal);
+			/* DO NOT CHANGE! */
+			WriteVpuRegister(W4_VPU_REMAP_VADDR, 0x00000000);
+			WriteVpuRegister(W4_VPU_REMAP_PADDR, code_base);
+			WriteVpuRegister(W4_ADDR_CODE_BASE, code_base);
+			WriteVpuRegister(W4_CODE_SIZE, code_size);
+			WriteVpuRegister(W4_CODE_PARAM, 0);
+			WriteVpuRegister(W4_INIT_VPU_TIME_OUT_CNT, timeout);
+			WriteVpuRegister(W4_HW_OPTION, hwOption);
+
+			/* Interrupt */
+			regVal = (1 << W4_INT_DEC_PIC_HDR);
+			regVal |= (1 << W4_INT_DEC_PIC);
+			regVal |= (1 << W4_INT_QUERY_DEC);
+			regVal |= (1 << W4_INT_SLEEP_VPU);
+			regVal |= (1 << W4_INT_BSBUF_EMPTY);
+			regVal = 0xfffffefe;
+			WriteVpuRegister(W4_VPU_VINT_ENABLE, regVal);
+			Wave4BitIssueCommand(core, W4_CMD_INIT_VPU);
+			WriteVpuRegister(W4_VPU_REMAP_CORE_START, 1);
+			while (ReadVpuRegister(W4_VPU_BUSY_STATUS)) {
+				if (time_after(jiffies, timeout))
+					goto DONE_WAKEUP;
+			}
+
+			if (ReadVpuRegister(W4_RET_SUCCESS) == 0) {
+				enc_pr(LOG_ERROR,
+					"WAKEUP_VPU failed [0x%x]",
+					ReadVpuRegister(W4_RET_FAIL_REASON));
 				goto DONE_WAKEUP;
-		}
-
-		if (ReadVpuRegister(W4_RET_SUCCESS) == 0) {
-			enc_pr(LOG_ERROR,
-				"WAKEUP_VPU failed [0x%x]",
-				ReadVpuRegister(W4_RET_FAIL_REASON));
-			goto DONE_WAKEUP;
+			}
 		}
 	}
 
@@ -1971,7 +1988,8 @@ static s32 __init vpu_init(void)
 	if ((get_cpu_type() != MESON_CPU_MAJOR_ID_GXM)
 		&& (get_cpu_type() != MESON_CPU_MAJOR_ID_G12A)
 			&& (get_cpu_type() != MESON_CPU_MAJOR_ID_GXLX)
-				&& (get_cpu_type() != MESON_CPU_MAJOR_ID_G12B)) {
+				&& (get_cpu_type() != MESON_CPU_MAJOR_ID_G12B)
+				&& (get_cpu_type() != MESON_CPU_MAJOR_ID_SM1)) {
 		enc_pr(LOG_DEBUG,
 			"The chip is not support hevc encoder\n");
 		return -1;
@@ -1993,8 +2011,16 @@ static s32 __init vpu_init(void)
 static void __exit vpu_exit(void)
 {
 	enc_pr(LOG_DEBUG, "vpu_exit\n");
-	if (get_cpu_type() == MESON_CPU_MAJOR_ID_GXM)
-		platform_driver_unregister(&vpu_driver);
+	if ((get_cpu_type() != MESON_CPU_MAJOR_ID_GXM) &&
+		(get_cpu_type() != MESON_CPU_MAJOR_ID_G12A) &&
+		(get_cpu_type() != MESON_CPU_MAJOR_ID_GXLX) &&
+		(get_cpu_type() != MESON_CPU_MAJOR_ID_G12B) &&
+		(get_cpu_type() != MESON_CPU_MAJOR_ID_SM1)) {
+		enc_pr(LOG_INFO,
+			"The chip is not support hevc encoder\n");
+		return;
+	}
+	platform_driver_unregister(&vpu_driver);
 }
 
 static const struct reserved_mem_ops rmem_hevc_ops = {

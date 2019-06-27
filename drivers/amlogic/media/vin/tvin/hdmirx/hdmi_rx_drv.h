@@ -34,19 +34,19 @@
 #include "hdmi_rx_edid.h"
 
 
-#define RX_VER0 "ver.2018-12-19"
+#define RX_VER0 "ver.2018-11-8"
 /*
  *
  *
  *
  *
  */
-#define RX_VER1 "ver.2019/01/08"
+#define RX_VER1 "ver.2018/10/22"
 /*
  *
  *
  */
-#define RX_VER2 "ver.2019/01/04"
+#define RX_VER2 "ver.2018/11/14"
 
 /*print type*/
 #define	LOG_EN		0x01
@@ -57,7 +57,6 @@
 #define EQ_LOG		0x20
 #define REG_LOG		0x40
 #define ERR_LOG		0x80
-#define EDID_LOG	0x100
 #define VSI_LOG		0x800
 
 /* 50ms timer for hdmirx main loop (HDMI_STATE_CHECK_FREQ is 20) */
@@ -119,8 +118,6 @@ struct hdmirx_dev_s {
 	struct clk *aud_out_clk;
 	struct clk *esm_clk;
 	struct clk *skp_clk;
-	struct clk *meter_clk;
-	struct clk *axi_clk;
 	const struct meson_hdmirx_data *data;
 };
 
@@ -204,13 +201,6 @@ enum map_addr_module_e {
 	MAP_ADDR_MODULE_NUM
 };
 
-enum rx_cn_type_e {
-	CN_GRAPHICS,
-	CN_PHOTO,
-	CN_CINEMA,
-	CN_GAME,
-};
-
 /**
  * @short HDMI RX controller video parameters
  *
@@ -255,7 +245,6 @@ struct rx_video_info {
 	enum hdmi_vic_e sw_vic;
 	uint8_t sw_dvi;
 	unsigned int it_content;
-	enum rx_cn_type_e cn_type;
 	/** AVI Q1-0, RGB quantization range */
 	unsigned int rgb_quant_range;
 	/** AVI Q1-0, YUV quantization range */
@@ -272,9 +261,9 @@ struct rx_video_info {
 /*emp buffer config*/
 #define DUMP_MODE_EMP	0
 #define DUMP_MODE_TMDS	1
-#define TMDS_BUFFER_SIZE	0x2000000 /*32M*/
+#define TMDS_BUFFER_SIZE	0x1e00000 /*30M*/
 #define EMP_BUFFER_SIZE		0x200000	/*2M*/
-#define EMP_BUFF_MAX_PKT_CNT ((EMP_BUFFER_SIZE/2)/32 - 200)
+#define EMP_BUFF_MAC_PKT_CNT ((EMP_BUFFER_SIZE/2)/32 - 200)
 #define TMDS_DATA_BUFFER_SIZE	0x200000
 
 
@@ -324,7 +313,6 @@ struct vsi_info_s {
 	bool backlt_md_bit;
 	unsigned int dolby_timeout;
 	unsigned int eff_tmax_pq;
-	bool allm_mode;
 };
 
 #define CHANNEL_STATUS_SIZE   24
@@ -373,11 +361,6 @@ struct phy_sts {
 	uint32_t pll_rate;
 	uint32_t clk_rate;
 	uint32_t phy_bw;
-	uint32_t pll_bw;
-	uint32_t cablesel;
-	ulong timestap;
-	uint32_t err_sum;
-	uint32_t eq_data[256];
 };
 
 struct emp_buff {
@@ -390,9 +373,8 @@ struct emp_buff {
 	void __iomem *storeA;
 	void __iomem *storeB;
 	void __iomem *ready;
-	unsigned long irqcnt;
 	unsigned int emppktcnt;
-	unsigned int tmdspktcnt;
+	unsigned long irqcnt;
 };
 
 struct rx_s {
@@ -446,7 +428,7 @@ struct rx_s {
 	unsigned int pwr_sts;
 	/* for debug */
 	/*struct pd_infoframe_s dbg_info;*/
-	struct phy_sts phy;
+	struct phy_sts physts;
 	struct emp_buff empbuff;
 };
 
@@ -520,6 +502,7 @@ extern bool is_aud_pll_error(void);
 extern int hdmirx_debug(const char *buf, int size);
 extern void dump_reg(void);
 extern void dump_edid_reg(void);
+extern void dump_state(unsigned char enable);
 extern void rx_debug_loadkey(void);
 extern void rx_debug_load22key(void);
 extern int rx_debug_wr_reg(const char *buf, char *tmpbuf, int i);

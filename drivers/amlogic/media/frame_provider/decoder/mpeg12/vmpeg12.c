@@ -43,6 +43,9 @@
 #include <linux/amlogic/media/codec_mm/configs.h>
 #include <linux/amlogic/tee.h>
 
+#include <trace/events/meson_atrace.h>
+
+
 #ifdef CONFIG_AM_VDEC_MPEG12_LOG
 #define AMLOG
 #define LOG_LEVEL_VAR       amlog_level_vmpeg
@@ -173,6 +176,7 @@ static int ccbuf_phyAddress_is_remaped_nocache;
 static u32 lastpts;
 static u32 fr_hint_status;
 static u32 last_offset;
+static u32 ratio_control;
 
 
 static DEFINE_SPINLOCK(lock);
@@ -291,6 +295,8 @@ static void set_frame_info(struct vframe_s *vf)
 
 	else
 		vf->ratio_control = 0;
+
+	ratio_control = vf->ratio_control;
 
 	amlog_level_if(first, LOG_LEVEL_INFO,
 		"mpeg2dec: w(%d), h(%d), dur(%d), dur-ES(%d)\n",
@@ -861,6 +867,7 @@ static irqreturn_t vmpeg12_isr(int irq, void *dev_id)
 	u32 reg, info, seqinfo, offset, pts, pts_valid = 0;
 	struct vframe_s *vf;
 	u64 pts_us64 = 0;
+	u32 frame_size;
 
 	WRITE_VREG(ASSIST_MBOX1_CLR_REG, 1);
 
@@ -877,7 +884,8 @@ static irqreturn_t vmpeg12_isr(int irq, void *dev_id)
 			first_i_frame_ready = 1;
 
 		if ((pts_lookup_offset_us64
-			 (PTS_TYPE_VIDEO, offset, &pts, 0, &pts_us64) == 0)
+			 (PTS_TYPE_VIDEO, offset, &pts,
+			 &frame_size, 0, &pts_us64) == 0)
 			&& (((info & PICINFO_TYPE_MASK) == PICINFO_TYPE_I)
 				|| ((info & PICINFO_TYPE_MASK) ==
 					PICINFO_TYPE_P)))
@@ -995,6 +1003,7 @@ static irqreturn_t vmpeg12_isr(int irq, void *dev_id)
 						index);
 				kfifo_put(&display_q,
 						  (const struct vframe_s *)vf);
+				ATRACE_COUNTER(MODULE_NAME, vf->pts);
 				vf_notify_receiver(PROVIDER_NAME,
 					VFRAME_EVENT_PROVIDER_VFRAME_READY,
 					NULL);
@@ -1080,6 +1089,7 @@ static irqreturn_t vmpeg12_isr(int irq, void *dev_id)
 						index);
 				kfifo_put(&display_q,
 						  (const struct vframe_s *)vf);
+				ATRACE_COUNTER(MODULE_NAME, vf->pts);
 				vf_notify_receiver(PROVIDER_NAME,
 					VFRAME_EVENT_PROVIDER_VFRAME_READY,
 					NULL);
@@ -1132,6 +1142,7 @@ static irqreturn_t vmpeg12_isr(int irq, void *dev_id)
 						index);
 				kfifo_put(&display_q,
 					(const struct vframe_s *)vf);
+				ATRACE_COUNTER(MODULE_NAME, vf->pts);
 				vf_notify_receiver(PROVIDER_NAME,
 					VFRAME_EVENT_PROVIDER_VFRAME_READY,
 					NULL);
@@ -1172,6 +1183,7 @@ static irqreturn_t vmpeg12_isr(int irq, void *dev_id)
 				} else {
 					kfifo_put(&display_q,
 						(const struct vframe_s *)vf);
+					ATRACE_COUNTER(MODULE_NAME, vf->pts);
 					vf_notify_receiver(PROVIDER_NAME,
 					VFRAME_EVENT_PROVIDER_VFRAME_READY,
 						NULL);
@@ -1263,7 +1275,7 @@ static void vmpeg12_ppmgr_reset(void)
 #endif
 
 static void vmpeg12_reset_userdata_fifo(struct vdec_s *vdec, int bInit);
-static void vmpeg12_wakeup_userdata_poll(void);
+static void vmpeg12_wakeup_userdata_poll(struct vdec_s *vdec);
 
 static void reset_do_work(struct work_struct *work)
 {
@@ -1288,8 +1300,7 @@ static void reset_do_work(struct work_struct *work)
 
 static void vmpeg12_set_clk(struct work_struct *work)
 {
-	if (frame_dur > 0 && saved_resolution !=
-		frame_width * frame_height * (96000 / frame_dur)) {
+	 {
 		int fps = 96000 / frame_dur;
 
 		saved_resolution = frame_width * frame_height * fps;
@@ -1353,7 +1364,9 @@ static void vmpeg_put_timer_func(unsigned long arg)
 		}
 	}
 
-	schedule_work(&set_clk_work);
+	if (frame_dur > 0 && saved_resolution !=
+		frame_width * frame_height * (96000 / frame_dur))
+		schedule_work(&set_clk_work);
 
 	timer->expires = jiffies + PUT_INTERVAL;
 
@@ -1383,6 +1396,7 @@ int vmpeg12_dec_status(struct vdec_s *vdec, struct vdec_info *vstatus)
 	vstatus->total_data = gvs->total_data;
 	vstatus->samp_cnt = gvs->samp_cnt;
 	vstatus->offset = gvs->offset;
+	vstatus->ratio_control = ratio_control;
 	snprintf(vstatus->vdec_name, sizeof(vstatus->vdec_name),
 		"%s", DRIVER_NAME);
 
@@ -1487,15 +1501,12 @@ static int vmpeg12_user_data_read(struct vdec_s *vdec,
 	u8 *rec_data_start;
 	u8 *pdest_buf;
 	struct mpeg12_userdata_recored_t *p_userdata_rec;
-	unsigned long addr;
-
-
 	u32 data_size;
 	u32 res;
 	int copy_ok = 1;
 
-	addr = puserdata_para->pbuf_addr;
-	pdest_buf = (void *)addr;
+	pdest_buf = puserdata_para->pbuf_addr;
+
 	mutex_lock(&userdata_mutex);
 
 	if (!p_userdata_mgr) {
@@ -1683,9 +1694,9 @@ static void vmpeg12_reset_userdata_fifo(struct vdec_s *vdec, int bInit)
 	mutex_unlock(&userdata_mutex);
 }
 
-static void vmpeg12_wakeup_userdata_poll(void)
+static void vmpeg12_wakeup_userdata_poll(struct vdec_s *vdec)
 {
-	amstream_wakeup_userdata_poll();
+	amstream_wakeup_userdata_poll(vdec);
 }
 
 static int vmpeg12_vdec_info_init(void)
@@ -1989,13 +2000,14 @@ static s32 vmpeg12_init(void)
 	vf_reg_provider(&vmpeg_vf_prov);
 #endif
 	if (vmpeg12_amstream_dec_info.rate != 0) {
-		if (!is_reset)
+		if (!is_reset) {
 			vf_notify_receiver(PROVIDER_NAME,
 				VFRAME_EVENT_PROVIDER_FR_HINT,
 				(void *)
 				((unsigned long)
 				vmpeg12_amstream_dec_info.rate));
-		fr_hint_status = VDEC_HINTED;
+			fr_hint_status = VDEC_HINTED;
+		}
 	} else
 		fr_hint_status = VDEC_NEED_HINT;
 
@@ -2087,7 +2099,6 @@ static int amvdec_mpeg12_remove(struct platform_device *pdev)
 	cancel_work_sync(&userdata_push_work);
 	cancel_work_sync(&notify_work);
 	cancel_work_sync(&reset_work);
-	cancel_work_sync(&set_clk_work);
 
 	if (stat & STAT_VDEC_RUN) {
 		amvdec_stop();
@@ -2104,8 +2115,9 @@ static int amvdec_mpeg12_remove(struct platform_device *pdev)
 		stat &= ~STAT_TIMER_ARM;
 	}
 
+	cancel_work_sync(&set_clk_work);
 	if (stat & STAT_VF_HOOK) {
-		if (fr_hint_status == VDEC_HINTED && !is_reset)
+		if (fr_hint_status == VDEC_HINTED)
 			vf_notify_receiver(PROVIDER_NAME,
 				VFRAME_EVENT_PROVIDER_FR_END_HINT, NULL);
 		fr_hint_status = VDEC_NO_NEED_HINT;

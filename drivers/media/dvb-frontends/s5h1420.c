@@ -145,8 +145,8 @@ static int s5h1420_set_voltage(struct dvb_frontend *fe,
 		s5h1420_writereg(state, 0x3c, s5h1420_readreg(state, 0x3c) & 0xfd);
 		break;
 
-	case SEC_VOLTAGE_ON:
-		break;
+	//case SEC_VOLTAGE_ON:
+	//	break;
 	}
 
 	dprintk("leave %s\n", __func__);

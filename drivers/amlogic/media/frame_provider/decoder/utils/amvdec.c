@@ -81,7 +81,7 @@ static void amvdec_pg_enable(bool enable)
 	} else {
 
 		AMVDEC_CLK_GATE_OFF(AMRISC);
-		timeout = jiffies + HZ / 10;
+		timeout = jiffies + HZ / 100;
 
 		while (READ_VREG(MDEC_PIC_DC_STATUS) != 0) {
 			if (time_after(jiffies, timeout)) {
@@ -95,7 +95,7 @@ static void amvdec_pg_enable(bool enable)
 		}
 
 		AMVDEC_CLK_GATE_OFF(MDEC_CLK_PIC_DC);
-		timeout = jiffies + HZ / 10;
+		timeout = jiffies + HZ / 100;
 
 		while (READ_VREG(DBLK_STATUS) & 1) {
 			if (time_after(jiffies, timeout)) {
@@ -108,7 +108,7 @@ static void amvdec_pg_enable(bool enable)
 			}
 		}
 		AMVDEC_CLK_GATE_OFF(MDEC_CLK_DBLK);
-		timeout = jiffies + HZ / 10;
+		timeout = jiffies + HZ / 100;
 
 		while (READ_VREG(MC_STATUS0) & 1) {
 			if (time_after(jiffies, timeout)) {
@@ -121,7 +121,7 @@ static void amvdec_pg_enable(bool enable)
 			}
 		}
 		AMVDEC_CLK_GATE_OFF(MC_CLK);
-		timeout = jiffies + HZ / 10;
+		timeout = jiffies + HZ / 100;
 		while (READ_VREG(DCAC_DMA_CTRL) & 0x8000) {
 			if (time_after(jiffies, timeout))
 				break;
@@ -381,6 +381,7 @@ s32 optee_load_fw(enum vformat_e type, const char *fw_name)
 	unsigned int format = FIRMWARE_MAX;
 	unsigned int vdec = OPTEE_VDEC_LEGENCY;
 	char *name = __getname();
+	bool is_swap = false;
 
 	sprintf(name, "%s", fw_name ? fw_name : "null");
 
@@ -425,7 +426,11 @@ s32 optee_load_fw(enum vformat_e type, const char *fw_name)
 	case VFORMAT_HEVC:
 		if (!strcmp(name, "h265_mmu"))
 			format = VIDEO_DEC_HEVC_MMU;
-		else
+		else if (!strcmp(name, "hevc_mmu_swap")) {
+			format = VIDEO_DEC_HEVC_MMU_SWAP;
+			vdec = OPTEE_VDEC_HEVC;
+			is_swap = true;
+		} else
 			format = VIDEO_DEC_HEVC;
 		break;
 
@@ -478,8 +483,12 @@ s32 optee_load_fw(enum vformat_e type, const char *fw_name)
 		break;
 	}
 
-	if (format < FIRMWARE_MAX)
-		ret = tee_load_video_fw(format, vdec);
+	if (format < FIRMWARE_MAX) {
+		if (is_swap)
+			ret = tee_load_video_fw_swap(format, vdec, is_swap);
+		else
+			ret = tee_load_video_fw(format, vdec);
+	}
 
 	__putname(name);
 
@@ -801,7 +810,7 @@ EXPORT_SYMBOL(amhevc_start);
 
 void amvdec_stop(void)
 {
-	ulong timeout = jiffies + HZ;
+	ulong timeout = jiffies + HZ/10;
 
 	WRITE_VREG(MPSR, 0);
 	WRITE_VREG(CPSR, 0);
@@ -811,7 +820,7 @@ void amvdec_stop(void)
 			break;
 	}
 
-	timeout = jiffies + HZ;
+	timeout = jiffies + HZ/10;
 	while (READ_VREG(LMEM_DMA_CTRL) & 0x8000) {
 		if (time_after(jiffies, timeout))
 			break;
@@ -850,7 +859,7 @@ EXPORT_SYMBOL(amvdec_stop);
 void amvdec2_stop(void)
 {
 	if (has_vdec2()) {
-		ulong timeout = jiffies + HZ;
+		ulong timeout = jiffies + HZ/10;
 
 		WRITE_VREG(VDEC2_MPSR, 0);
 		WRITE_VREG(VDEC2_CPSR, 0);
@@ -880,7 +889,7 @@ EXPORT_SYMBOL(amhcodec_stop);
 void amhevc_stop(void)
 {
 	if (has_hevc_vdec()) {
-		ulong timeout = jiffies + HZ;
+		ulong timeout = jiffies + HZ/10;
 
 		WRITE_VREG(HEVC_MPSR, 0);
 		WRITE_VREG(HEVC_CPSR, 0);
@@ -890,7 +899,7 @@ void amhevc_stop(void)
 				break;
 		}
 
-		timeout = jiffies + HZ;
+		timeout = jiffies + HZ/10;
 		while (READ_VREG(HEVC_LMEM_DMA_CTRL) & 0x8000) {
 			if (time_after(jiffies, timeout))
 				break;

@@ -1,5 +1,20 @@
+/*
+ * drivers/amlogic/media/enhancement/amvecm/local_contrast.c
+ *
+ * Copyright (C) 2017 Amlogic, Inc. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ */
 
-/* #include <mach/am_regs.h> */
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/slab.h>
@@ -51,45 +66,61 @@ unsigned int lc_hist_ve;
 unsigned int lc_hist_hs;
 unsigned int lc_hist_he;
 /*lc curve data and hist data*/
-static int *lc_szcurve;/*12*8*6+4*/
-static int *curve_nodes_cur;
+int *lc_szcurve;/*12*8*6+4*/
+int *curve_nodes_cur;
 static int *curve_nodes_pre;
-static int *lc_hist;/*12*8*17*/
+int *lc_hist;/*12*8*17*/
 static bool lc_malloc_ok;
 /*print one or more frame data*/
 unsigned int lc_hist_prcnt;
 unsigned int lc_curve_prcnt;
+bool lc_curve_fresh = true;
+
+struct ve_lc_curve_parm_s lc_curve_parm_load;
+struct lc_alg_param_s lc_alg_parm;
 
 /*lc saturation gain, low parameters*/
-static unsigned int lc_satur_gain[63] = {
-	51, 104, 158, 213, 269, 325, 382, 440, 498,
-	556, 615, 674, 734, 794, 854, 915, 976, 1037,
-	1099, 1161, 1223, 1286, 1348, 1411, 1475, 1538,
-	1602, 1666, 1730, 1795, 1859, 1924, 1989, 2054,
-	2120, 2186, 2251, 2318, 2384, 2450, 2517, 2584,
-	2651, 2718, 2785, 2853, 2921, 2988, 3057, 3125,
-	3193, 3262, 3330, 3399, 3468, 3537, 3607, 3676,
-	3746, 3815, 3885, 3955, 4026
+/*static unsigned int lc_satur_gain[63] = {
+ *	51, 104, 158, 213, 269, 325, 382, 440, 498,
+ *	556, 615, 674, 734, 794, 854, 915, 976, 1037,
+ *	1099, 1161, 1223, 1286, 1348, 1411, 1475, 1538,
+ *	1602, 1666, 1730, 1795, 1859, 1924, 1989, 2054
+ *	2120, 2186, 2251, 2318, 2384, 2450, 2517, 2584,
+ *	2651, 2718, 2785, 2853, 2921, 2988, 3057, 3125,
+ *	3193, 3262, 3330, 3399, 3468, 3537, 3607, 3676,
+ *	3746, 3815, 3885, 3955, 4026
+ *};
+ */
+
+/*lc saturation gain, off parameters*/
+static unsigned int lc_satur_off[63] = {
+	64, 128, 192, 256, 320, 384, 448, 512, 576, 640,
+	704, 768, 832, 896, 960, 1024, 1088, 1152, 1216,
+	1280, 1344, 1408, 1472, 1536, 1600, 1664, 1728,
+	1792, 1856, 1920, 1984, 2048, 2112, 2176, 2240,
+	2304, 2368, 2432, 2496, 2560, 2624, 2688, 2752,
+	2816, 2880, 2944, 3008, 3072, 3136, 3200, 3264,
+	3328, 3392, 3456, 3520, 3584, 3648, 3712, 3776,
+	3840, 3904, 3968, 4032
 };
 
 /*lc saturation gain, low parameters*/
-/*
- *static unsigned int lc_satur_off[63] = {
- *	64, 128, 192, 256, 320, 384, 448, 512, 576, 640,
- *	704, 768, 832, 896, 960, 1024, 1088, 1152, 1216,
- *	1280, 1344, 1408, 1472, 1536, 1600, 1664, 1728,
- *	1792, 1856, 1920, 1984, 2048, 2112, 2176, 2240,
- *	2304, 2368, 2432, 2496, 2560, 2624, 2688, 2752,
- *	2816, 2880, 2944, 3008, 3072, 3136, 3200, 3264,
- *	3328, 3392, 3456, 3520, 3584, 3648, 3712, 3776,
- *	3840, 3904, 3968, 4032
- *};
- */
+/*static unsigned int lc_satur_low[63] = {*/
+/*	84, 167, 249, 330, 411, 490, 568, 646, 723, 798,*/
+/*	873, 947, 1020, 1092, 1163, 1234, 1303, 1372, 1440,*/
+/*	1506, 1572, 1638, 1702, 1766, 1828, 1890, 1951,*/
+/*	2011, 2071, 2130, 2187, 2245, 2301, 2356, 2411,*/
+/*	2465, 2518, 2571, 2623, 2674, 2724, 2774, 2822,*/
+/*	2871, 2919, 2967, 3016, 3065, 3115, 3165, 3217,*/
+/*	3271, 3326, 3384, 3443, 3506, 3571, 3639, 3710,*/
+/*	3785, 3863, 3945, 4032*/
+/*};*/
 
 /*local contrast begin*/
 static void lc_mtx_set(enum lc_mtx_sel_e mtx_sel,
 	enum lc_mtx_csc_e mtx_csc,
-	int mtx_en)
+	int mtx_en,
+	int bitdepth)
 {
 	unsigned int matrix_coef00_01 = 0;
 	unsigned int matrix_coef02_10 = 0;
@@ -145,14 +176,72 @@ static void lc_mtx_set(enum lc_mtx_sel_e mtx_sel,
 		return;
 
 	switch (mtx_csc) {
-	case LC_MTX_RGB_YUV709L:
+	case LC_MTX_RGB_YUV601L:
 		if (mtx_sel & (INP_MTX | OUTP_MTX)) {
 			WRITE_VPP_REG(matrix_coef00_01, 0x1070204);
 			WRITE_VPP_REG(matrix_coef02_10, 0x640f68);
 			WRITE_VPP_REG(matrix_coef11_12, 0xed601c2);
 			WRITE_VPP_REG(matrix_coef20_21, 0x01c20e87);
 			WRITE_VPP_REG(matrix_coef22, 0x0000fb7);
+			if (bitdepth == 10) {
+				WRITE_VPP_REG(matrix_offset0_1, 0x00400200);
+				WRITE_VPP_REG(matrix_clip, 0x3ff);
+			} else {
+				WRITE_VPP_REG(matrix_offset0_1, 0x01000800);
+				WRITE_VPP_REG(matrix_clip, 0xfff);
+			}
+		} else if (mtx_sel & STAT_MTX) {
+			WRITE_VPP_REG(matrix_coef00_01, 0x00bb0275);
+			WRITE_VPP_REG(matrix_coef02_10, 0x003f1f99);
+			WRITE_VPP_REG(matrix_coef11_12, 0x1ea601c2);
+			WRITE_VPP_REG(matrix_coef20_21, 0x01c21e67);
+			WRITE_VPP_REG(matrix_coef22, 0x00001fd7);
 			WRITE_VPP_REG(matrix_offset0_1, 0x00400200);
+			WRITE_VPP_REG(matrix_offset2, 0x00000200);
+			WRITE_VPP_REG(matrix_pre_offset0_1, 0x0);
+			WRITE_VPP_REG(matrix_pre_offset2, 0x0);
+		}
+		break;
+	case LC_MTX_YUV601L_RGB:
+		if (mtx_sel & (INP_MTX | OUTP_MTX)) {
+			WRITE_VPP_REG(matrix_coef00_01, 0x012a0000);
+			WRITE_VPP_REG(matrix_coef02_10, 0x198012a);
+			WRITE_VPP_REG(matrix_coef11_12, 0xf9c0f30);
+			WRITE_VPP_REG(matrix_coef20_21, 0x12a0204);
+			WRITE_VPP_REG(matrix_coef22, 0x0);
+			if (bitdepth == 10) {
+				WRITE_VPP_REG(matrix_pre_offset0_1, 0x00400200);
+				WRITE_VPP_REG(matrix_clip, 0x3ff);
+			} else {
+				WRITE_VPP_REG(matrix_pre_offset0_1, 0x01000800);
+				WRITE_VPP_REG(matrix_clip, 0xfff);
+			}
+		} else if (mtx_sel & STAT_MTX) {
+			WRITE_VPP_REG(matrix_coef00_01, 0x04A80000);
+			WRITE_VPP_REG(matrix_coef02_10, 0x072C04A8);
+			WRITE_VPP_REG(matrix_coef11_12, 0x1F261DDD);
+			WRITE_VPP_REG(matrix_coef20_21, 0x04A80876);
+			WRITE_VPP_REG(matrix_coef22, 0x0);
+			WRITE_VPP_REG(matrix_offset0_1, 0x0);
+			WRITE_VPP_REG(matrix_offset2, 0x0);
+			WRITE_VPP_REG(matrix_pre_offset0_1, 0x7c00600);
+			WRITE_VPP_REG(matrix_pre_offset2, 0x00000600);
+		}
+		break;
+	case LC_MTX_RGB_YUV709L:
+		if (mtx_sel & (INP_MTX | OUTP_MTX)) {
+			WRITE_VPP_REG(matrix_coef00_01, 0xba0273);
+			WRITE_VPP_REG(matrix_coef02_10, 0x3f0f9a);
+			WRITE_VPP_REG(matrix_coef11_12, 0xea701c0);
+			WRITE_VPP_REG(matrix_coef20_21, 0x1c00e6a);
+			WRITE_VPP_REG(matrix_coef22, 0xfd7);
+			if (bitdepth == 10) {
+				WRITE_VPP_REG(matrix_offset0_1, 0x00400200);
+				WRITE_VPP_REG(matrix_clip, 0x3ff);
+			} else {
+				WRITE_VPP_REG(matrix_offset0_1, 0x01000800);
+				WRITE_VPP_REG(matrix_clip, 0xfff);
+			}
 		} else if (mtx_sel & STAT_MTX) {
 			WRITE_VPP_REG(matrix_coef00_01, 0x00bb0275);
 			WRITE_VPP_REG(matrix_coef02_10, 0x003f1f99);
@@ -167,12 +256,18 @@ static void lc_mtx_set(enum lc_mtx_sel_e mtx_sel,
 		break;
 	case LC_MTX_YUV709L_RGB:
 		if (mtx_sel & (INP_MTX | OUTP_MTX)) {
-			WRITE_VPP_REG(matrix_coef00_01, 0x012a0000);
-			WRITE_VPP_REG(matrix_coef02_10, 0x198012a);
-			WRITE_VPP_REG(matrix_coef11_12, 0xf9c0f30);
-			WRITE_VPP_REG(matrix_coef20_21, 0x12a0204);
+			WRITE_VPP_REG(matrix_coef00_01, 0x12b0000);
+			WRITE_VPP_REG(matrix_coef02_10, 0x1cc012b);
+			WRITE_VPP_REG(matrix_coef11_12, 0xfc90f77);
+			WRITE_VPP_REG(matrix_coef20_21, 0x12b021f);
 			WRITE_VPP_REG(matrix_coef22, 0x0);
-			WRITE_VPP_REG(matrix_pre_offset0_1, 0x00400200);
+			if (bitdepth == 10) {
+				WRITE_VPP_REG(matrix_pre_offset0_1, 0x00400200);
+				WRITE_VPP_REG(matrix_clip, 0x3ff);
+			} else {
+				WRITE_VPP_REG(matrix_pre_offset0_1, 0x01000800);
+				WRITE_VPP_REG(matrix_clip, 0xfff);
+			}
 		} else if (mtx_sel & STAT_MTX) {
 			WRITE_VPP_REG(matrix_coef00_01, 0x04A80000);
 			WRITE_VPP_REG(matrix_coef02_10, 0x072C04A8);
@@ -194,7 +289,15 @@ static void lc_mtx_set(enum lc_mtx_sel_e mtx_sel,
 			WRITE_VPP_REG(matrix_coef22, 0x400);
 			WRITE_VPP_REG(matrix_offset0_1, 0x0);
 		} else if (mtx_sel & STAT_MTX) {
-
+			WRITE_VPP_REG(matrix_coef00_01, 0x04000000);
+			WRITE_VPP_REG(matrix_coef02_10, 0x0);
+			WRITE_VPP_REG(matrix_coef11_12, 0x04000000);
+			WRITE_VPP_REG(matrix_coef20_21, 0x0);
+			WRITE_VPP_REG(matrix_coef22, 0x400);
+			WRITE_VPP_REG(matrix_offset0_1, 0x0);
+			WRITE_VPP_REG(matrix_offset2, 0x0);
+			WRITE_VPP_REG(matrix_pre_offset0_1, 0x0);
+			WRITE_VPP_REG(matrix_pre_offset2, 0x0);
 		}
 		break;
 	default:
@@ -278,7 +381,8 @@ static void lc_stts_en(int enable,
 	int eol_en,
 	int hist_mode,
 	int lpf_en,
-	int din_sel)
+	int din_sel,
+	int bitdepth)
 {
 	int data32;
 
@@ -291,7 +395,7 @@ static void lc_stts_en(int enable,
 	data32 = data32 | ((lpf_en & 0x1) << 21);
 	WRITE_VPP_REG(LC_STTS_HIST_REGION_IDX, data32);
 
-	lc_mtx_set(STAT_MTX, LC_MTX_YUV709L_RGB, enable);
+	lc_mtx_set(STAT_MTX, LC_MTX_YUV709L_RGB, enable, bitdepth);
 
 	WRITE_VPP_REG_BITS(LC_STTS_CTRL0, din_sel, 3, 3);
 	/*lc hist stts enable*/
@@ -381,7 +485,7 @@ static void lc_blk_bdry_config(unsigned int height, unsigned int width)
 }
 
 static void lc_top_config(int enable, int h_num, int v_num,
-	unsigned int height, unsigned int width)
+	unsigned int height, unsigned int width, int bitdepth, int flag)
 {
 	/*lcinput_ysel*/
 	WRITE_VPP_REG_BITS(SRSHARP1_LC_INPUT_MUX, 5, 4, 3);
@@ -403,8 +507,13 @@ static void lc_top_config(int enable, int h_num, int v_num,
 	WRITE_VPP_REG_BITS(SRSHARP1_LC_TOP_CTRL, 0, 16, 1);
 	/*lc enable need set at last*/
 	WRITE_VPP_REG_BITS(SRSHARP1_LC_TOP_CTRL, enable, 4, 1);
-	lc_mtx_set(INP_MTX, LC_MTX_YUV709L_RGB, 1);
-	lc_mtx_set(OUTP_MTX, LC_MTX_RGB_YUV709L, 1);
+	if (flag == 1) {
+		lc_mtx_set(INP_MTX, LC_MTX_YUV709L_RGB, 1, bitdepth);
+		lc_mtx_set(OUTP_MTX, LC_MTX_RGB_YUV709L, 1, bitdepth);
+	} else {
+		lc_mtx_set(INP_MTX, LC_MTX_YUV601L_RGB, 1, bitdepth);
+		lc_mtx_set(OUTP_MTX, LC_MTX_RGB_YUV601L, 1, bitdepth);
+	}
 }
 
 static void lc_disable(void)
@@ -421,11 +530,13 @@ static void lc_disable(void)
 static void lc_config(int enable,
 	struct vframe_s *vf,
 	unsigned int sps_h_en,
-	unsigned int sps_v_en)
+	unsigned int sps_v_en,
+	int bitdepth)
 {
 	int h_num, v_num;
 	unsigned int height, width;
 	static unsigned int vf_height, vf_width;
+	unsigned int flag;
 	const struct vinfo_s *vinfo = get_current_vinfo();
 
 	height = vinfo->height;
@@ -449,8 +560,9 @@ static void lc_config(int enable,
 
 	vf_height = vf->height;
 	vf_width = vf->width;
-
-	lc_top_config(enable, h_num, v_num, height, width);
+	/*flag: 0 for 601; 1 for 709*/
+	flag = (vf_height > 720) ? 1 : 0;
+	lc_top_config(enable, h_num, v_num, height, width, bitdepth, flag);
 
 	if (sps_h_en == 1)
 		width /= 2;
@@ -459,7 +571,7 @@ static void lc_config(int enable,
 
 	lc_curve_ctrl_config(enable, height, width);
 	lc_stts_blk_config(enable, height, width);
-	lc_stts_en(enable, height, width, 0, 0, 1, 1, 4);
+	lc_stts_en(enable, height, width, 0, 0, 1, 1, 4, bitdepth);
 }
 
 static void read_lc_curve(int blk_vnum, int blk_hnum)
@@ -993,10 +1105,11 @@ static void lc_fw_curve_iir(struct vframe_s *vf,
 	if (!vf)
 		return;
 
+	if (!lc_curve_fresh)
+		goto stop_curvefresh;
 	/* pre: get curve nodes from szCurveInfo and save to curve_nodes_cur*/
 	for (i = 0; i < 580; i++)/*12*8*6+4*/
 		curve_nodes_cur[i] = lc_szcurve[i];
-
 	/* pre: osd flag delay*/
 	osd_flag_cnt_below[0] = osd_flag_cnt_below[1];
 	osd_flag_cnt_above[0] = osd_flag_cnt_above[1];
@@ -1047,7 +1160,11 @@ static void lc_fw_curve_iir(struct vframe_s *vf,
 	frm_cnt_above--;
 	if (frm_cnt_above < 0)
 		frm_cnt_above = 0;
+	return;
 
+stop_curvefresh:
+	for (i = 0; i < 580; i++)
+		lc_szcurve[i] = curve_nodes_cur[i];/*output*/
 }
 
 static void lc_read_region(int blk_vnum, int blk_hnum)
@@ -1112,7 +1229,7 @@ static void lc_prt_curve(void)
 	}
 }
 
-void lc_init(void)
+void lc_init(int bitdepth)
 {
 	int h_num, v_num;
 	unsigned int height, width;
@@ -1149,27 +1266,37 @@ void lc_init(void)
 	if (!lc_en)
 		return;
 
-	lc_top_config(0, h_num, v_num, height, width);
-	lc_mtx_set(INP_MTX, LC_MTX_YUV709L_RGB, 1);
-	lc_mtx_set(OUTP_MTX, LC_MTX_RGB_YUV709L, 1);
+	lc_top_config(0, h_num, v_num, height, width, bitdepth, 1);
 	WRITE_VPP_REG_BITS(LC_CURVE_RAM_CTRL, 0, 0, 1);
 
 	/*default LC low parameters*/
 	WRITE_VPP_REG(LC_CURVE_CONTRAST_LH, 0x000b000b);
-	WRITE_VPP_REG(LC_CURVE_CONTRAST_SCL_LH, 0x000b000b);
+	WRITE_VPP_REG(LC_CURVE_CONTRAST_SCL_LH, 0x00000b0b);
 	WRITE_VPP_REG(LC_CURVE_MISC0, 0x00023028);
-	WRITE_VPP_REG(LC_CURVE_YPKBV_RAT, 0x3e69443c);
-	WRITE_VPP_REG(LC_CURVE_YPKBV_SLP_LMT, 0x00000b33);
-	WRITE_VPP_REG(LC_CURVE_YPKBV_YMAXVAL_LMT_0_1, 0x00440088);
+	WRITE_VPP_REG(LC_CURVE_YPKBV_RAT, 0x8cc0c060);
+	WRITE_VPP_REG(LC_CURVE_YPKBV_SLP_LMT, 0x00000b3a);
+
+	WRITE_VPP_REG(LC_CURVE_YMINVAL_LMT_0_1, 0x0030005d);
+	WRITE_VPP_REG(LC_CURVE_YMINVAL_LMT_2_3, 0x00830091);
+	WRITE_VPP_REG(LC_CURVE_YMINVAL_LMT_4_5, 0x00a000c4);
+	WRITE_VPP_REG(LC_CURVE_YMINVAL_LMT_6_7, 0x00e00100);
+	WRITE_VPP_REG(LC_CURVE_YMINVAL_LMT_8_9, 0x01200140);
+	WRITE_VPP_REG(LC_CURVE_YMINVAL_LMT_10_11, 0x01600190);
+
+	WRITE_VPP_REG(LC_CURVE_YPKBV_YMAXVAL_LMT_0_1, 0x004400b4);
+	WRITE_VPP_REG(LC_CURVE_YPKBV_YMAXVAL_LMT_2_3, 0x00fb0123);
+	WRITE_VPP_REG(LC_CURVE_YPKBV_YMAXVAL_LMT_4_5, 0x015901a2);
+	WRITE_VPP_REG(LC_CURVE_YPKBV_YMAXVAL_LMT_6_7, 0x01d90208);
+	WRITE_VPP_REG(LC_CURVE_YPKBV_YMAXVAL_LMT_8_9, 0x02400280);
 	WRITE_VPP_REG(LC_CURVE_YPKBV_YMAXVAL_LMT_10_11, 0x02d70310);
 
 	for (i = 0; i < 31 ; i++) {
-		tmp1 = *(lc_satur_gain + 2 * i);
-		tmp2 = *(lc_satur_gain + 2 * i + 1);
+		tmp1 = *(lc_satur_off + 2 * i);
+		tmp2 = *(lc_satur_off + 2 * i + 1);
 		tmp = ((tmp1 & 0xfff)<<16) | (tmp2 & 0xfff);
 		WRITE_VPP_REG(SRSHARP1_LC_SAT_LUT_0_1 + i, tmp);
 	}
-	tmp = (*(lc_satur_gain + 62)) & 0xfff;
+	tmp = (*(lc_satur_off + 62)) & 0xfff;
 	WRITE_VPP_REG(SRSHARP1_LC_SAT_LUT_62, tmp);
 	/*end*/
 
@@ -1182,9 +1309,18 @@ void lc_process(struct vframe_s *vf,
 	unsigned int sps_v_en)
 {
 	int blk_hnum, blk_vnum, dwTemp;
+	int bitdepth;
 
 	if (get_cpu_type() < MESON_CPU_MAJOR_ID_TL1)
 		return;
+
+	if (is_meson_tl1_cpu())
+		bitdepth = 10;
+	else if (is_meson_tm2_cpu())
+		bitdepth = 12;
+	else
+		bitdepth = 12;
+
 	if (!lc_en) {
 		lc_disable();
 		return;
@@ -1208,9 +1344,10 @@ void lc_process(struct vframe_s *vf,
 	dwTemp = READ_VPP_REG(LC_CURVE_HV_NUM);
 	blk_hnum = (dwTemp >> 8) & 0x1f;
 	blk_vnum = (dwTemp) & 0x1f;
-	lc_config(lc_en, vf, sps_h_en, sps_v_en);
+	lc_config(lc_en, vf, sps_h_en, sps_v_en, bitdepth);
 	/*get each block curve*/
 	read_lc_curve(blk_vnum, blk_hnum);
+	lc_read_region(blk_vnum, blk_hnum);
 	/*do time domain iir*/
 	lc_fw_curve_iir(vf, lc_hist,
 		lc_szcurve, blk_vnum, blk_hnum);
@@ -1218,7 +1355,6 @@ void lc_process(struct vframe_s *vf,
 		lc_prt_curve();
 		lc_curve_prcnt--;
 	}
-	lc_read_region(blk_vnum, blk_hnum);
 	if (set_lc_curve(0, 1))
 		pr_amlc_dbg("%s: set lc curve fail", __func__);
 

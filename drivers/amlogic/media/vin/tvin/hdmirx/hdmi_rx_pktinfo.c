@@ -336,7 +336,7 @@ void rx_debug_pktinfo(char input[][20])
 {
 	uint32_t sts = 0;
 	uint32_t enable = 0;
-	uint32_t res = 0;
+	long res = 0;
 
 	if (strncmp(input[1], "debugfifo", 9) == 0) {
 		/*open all pkt interrupt source for debug*/
@@ -367,7 +367,7 @@ void rx_debug_pktinfo(char input[][20])
 		rx_pkt_status();
 	else if (strncmp(input[1], "dump", 7) == 0) {
 		/*check input type*/
-		if (kstrtou32(input[2], 16, &res) < 0)
+		if (kstrtol(input[2], 16, &res) < 0)
 			rx_pr("error input:fmt is 0xValue\n");
 		rx_pkt_dump(res);
 	} else if (strncmp(input[1], "irqdisable", 10) == 0) {
@@ -440,7 +440,7 @@ void rx_debug_pktinfo(char input[][20])
 		/*hdmirx_irq_open()*/
 	} else if (strncmp(input[1], "fifopkten", 9) == 0) {
 		/*check input*/
-		if (kstrtou32(input[2], 16, &res) < 0)
+		if (kstrtol(input[2], 16, &res) < 0)
 			return;
 		rx_pr("pkt ctl disable:0x%x", res);
 		/*check pkt enable ctl bit*/
@@ -455,7 +455,7 @@ void rx_debug_pktinfo(char input[][20])
 		hdmirx_wr_dwc(DWC_PDEC_CTRL, enable);
 	} else if (strncmp(input[1], "fifopktdis", 10) == 0) {
 		/*check input*/
-		if (kstrtou32(input[2], 16, &res) < 0)
+		if (kstrtol(input[2], 16, &res) < 0)
 			return;
 		rx_pr("pkt ctl disable:0x%x", res);
 		/*check pkt enable ctl bit*/
@@ -470,14 +470,14 @@ void rx_debug_pktinfo(char input[][20])
 		hdmirx_wr_dwc(DWC_PDEC_CTRL, enable);
 	} else if (strncmp(input[1], "contentchk", 10) == 0) {
 		/*check input*/
-		if (kstrtou32(input[2], 16, &res) < 0) {
+		if (kstrtol(input[2], 16, &res) < 0) {
 			rx_pr("error input:fmt is 0xXX\n");
 			return;
 		}
 		rx_pkt_content_chk_en(res);
 	} else if (strncmp(input[1], "pdfifopri", 9) == 0) {
 		/*check input*/
-		if (kstrtou32(input[2], 16, &res) < 0) {
+		if (kstrtol(input[2], 16, &res) < 0) {
 			rx_pr("error input:fmt is 0xXX\n");
 			return;
 		}
@@ -516,7 +516,7 @@ static void rx_pktdump_vsi(void *pdata)
 	rx_pr("3d vdfmt: 0x%x\n", pktdata->sbpkt.vsi.vdfmt);
 
 	if (pktdata->length == E_DV_LENGTH_24) {
-		/*dobly version v0 pkt*/
+		/*dolby version v0 pkt*/
 
 	} else {
 		if (pktdata->sbpkt.vsi.vdfmt == 0) {
@@ -1378,7 +1378,7 @@ void rx_get_vsi_info(void)
 			rx.vs_info_details.eff_tmax_pq = tmp;
 		}
 	} else if (pkt->ieee == 0x000c03) {
-		/* dobly10 */
+		/* dolby10 */
 		if (pkt->length == E_DV_LENGTH_24) {
 			rx.vs_info_details.dolby_vision = true;
 			if ((pkt->sbpkt.payload.data[0] & 0xffff) == 0)
@@ -1391,10 +1391,6 @@ void rx_get_vsi_info(void)
 			((pkt->sbpkt.payload.data[0] & 0xff) == 0)) {
 			rx.vs_info_details.dolby_vision = false;
 		}
-	} else if (pkt->ieee == 0xd85dc4) {
-		/*TODO:hdmi2.1 spec vsi packet*/
-		tmp = pkt->sbpkt.payload.data[0] & _BIT(9);
-		rx.vs_info_details.allm_mode = tmp ? true : false;
 	} else {
 		/*3d VSI*/
 		if (pkt->sbpkt.vsi_3Dext.vdfmt == VSI_FORMAT_3D_FORMAT) {

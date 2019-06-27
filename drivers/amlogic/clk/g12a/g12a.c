@@ -175,8 +175,8 @@ static struct meson_clk_pll g12a_hifi_pll = {
 		.shift   = 16,
 		.width   = 2,
 	},
-	.rate_table = g12a_pll_rate_table,
-	.rate_count = ARRAY_SIZE(g12a_pll_rate_table),
+	.rate_table = g12a_hifi_pll_rate_table,
+	.rate_count = ARRAY_SIZE(g12a_hifi_pll_rate_table),
 	.lock = &clk_lock,
 	.hw.init = &(struct clk_init_data){
 		.name = "hifi_pll",
@@ -560,55 +560,6 @@ static struct clk_gate g12a_12m_gate = {
 	},
 };
 
-static u32 mux_table_gen_clk[]	= { 0, 5, 6, 7, 20, 21, 22,
-				23, 24, 25, 26, 27, 28, };
-static const char * const gen_clk_parent_names[] = {
-	"xtal", "gp0_pll", "gp1_pll", "hifi_pll", "fclk_div2", "fclk_div3",
-	"fclk_div4", "fclk_div5", "fclk_div7", "mpll0", "mpll1",
-	"mpll2", "mpll3"
-};
-
-static struct clk_mux g12a_gen_clk_sel = {
-	.reg = (void *)HHI_GEN_CLK_CNTL,
-	.mask = 0x1f,
-	.shift = 12,
-	.table = mux_table_gen_clk,
-	.lock = &clk_lock,
-	.hw.init = &(struct clk_init_data){
-		.name = "gen_clk_sel",
-		.ops = &clk_mux_ops,
-		.parent_names = gen_clk_parent_names,
-		.num_parents = ARRAY_SIZE(gen_clk_parent_names),
-	},
-};
-
-static struct clk_divider g12a_gen_clk_div = {
-	.reg = (void *)HHI_GEN_CLK_CNTL,
-	.shift = 0,
-	.width = 11,
-	.lock = &clk_lock,
-	.hw.init = &(struct clk_init_data){
-		.name = "gen_clk_div",
-		.ops = &clk_divider_ops,
-		.parent_names = (const char *[]){ "gen_clk_sel" },
-		.num_parents = 1,
-		.flags = CLK_SET_RATE_PARENT,
-	},
-};
-
-static struct clk_gate g12a_gen_clk = {
-	.reg = (void *)HHI_GEN_CLK_CNTL,
-	.bit_idx = 11,
-	.lock = &clk_lock,
-	.hw.init = &(struct clk_init_data){
-		.name = "gen_clk",
-		.ops = &clk_gate_ops,
-		.parent_names = (const char *[]){ "gen_clk_div" },
-		.num_parents = 1,
-		.flags = CLK_SET_RATE_PARENT,
-	},
-};
-
 
 /* Everything Else (EE) domain gates */
 static struct clk_gate g12a_spicc_0 = {
@@ -801,10 +752,6 @@ static struct clk_hw *g12a_clk_hws[] = {
 	[CLKID_24M]             = &g12a_24m.hw,
 	[CLKID_12M_DIV]         = &g12a_12m_div.hw,
 	[CLKID_12M_GATE]        = &g12a_12m_gate.hw,
-	[CLKID_GEN_CLK_SEL]	= &g12a_gen_clk_sel.hw,
-	[CLKID_GEN_CLK_DIV]	= &g12a_gen_clk_div.hw,
-	[CLKID_GEN_CLK]		= &g12a_gen_clk.hw,
-
 };
 /* Convenience tables to populate base addresses in .probe */
 
@@ -891,7 +838,6 @@ static struct clk_gate *g12a_clk_gates[] = {
 	&g12a_efuse,
 	&g12a_24m,
 	&g12a_12m_gate,
-	&g12a_gen_clk,
 };
 
 static void __init g12a_clkc_init(struct device_node *np)
@@ -946,10 +892,7 @@ static void __init g12a_clkc_init(struct device_node *np)
 
 	g12a_12m_div.reg = clk_base
 					+ (unsigned long)g12a_12m_div.reg;
-	g12a_gen_clk_sel.reg = clk_base
-					+ (unsigned long)g12a_gen_clk_sel.reg;
-	g12a_gen_clk_div.reg = clk_base
-					+ (unsigned long)g12a_gen_clk_div.reg;
+
 	/* Populate base address for gates */
 	for (i = 0; i < ARRAY_SIZE(g12a_clk_gates); i++)
 		g12a_clk_gates[i]->reg = clk_base +
@@ -1027,6 +970,20 @@ static void __init g12a_clkc_init(struct device_node *np)
 				__func__);
 		goto iounmap;
 	}
+
+	if (of_property_read_bool(np, "own-dsu-clk")) {
+		if (clks[CLKID_DSU_CLK]) {
+			clk_set_parent(clks[CLKID_DSU_CLK],
+						clks[CLKID_CPU_CLK]);
+			/* set sm1_dsu_pre_clk to 1.5G, gp1 pll is 1.5G */
+			clk_set_rate(clks[CLKID_DSU_PRE_CLK], 1500000000);
+			clk_prepare_enable(clks[CLKID_DSU_PRE_CLK]);
+			/* set sm1_dsu_pre_clk as dsu_pre's parent */
+			clk_set_parent(clks[CLKID_DSU_CLK],
+						clks[CLKID_DSU_PRE_CLK]);
+		}
+	}
+
 	pr_debug("%s: cpu clk register notifier ok!", __func__);
 
 	ret = of_clk_add_provider(np, of_clk_src_onecell_get,
@@ -1045,4 +1002,5 @@ iounmap:
 
 CLK_OF_DECLARE(g12a, "amlogic,g12a-clkc", g12a_clkc_init);
 CLK_OF_DECLARE(g12b, "amlogic,g12b-clkc-1", g12a_clkc_init);
+CLK_OF_DECLARE(sm1,  "amlogic,sm1-clkc-1", g12a_clkc_init);
 

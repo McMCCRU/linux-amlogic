@@ -360,6 +360,7 @@ void vdin_afbce_cma_release(struct vdin_dev_s *devp)
 	devp->cma_mem_alloc = 0;
 }
 
+/*can not use RDMA, because vdin0/1 both use the register */
 void vdin_write_mif_or_afbce(struct vdin_dev_s *devp,
 	enum vdin_output_mif_e sel)
 {
@@ -367,37 +368,37 @@ void vdin_write_mif_or_afbce(struct vdin_dev_s *devp,
 
 	if (offset == 0) {
 		if (sel == VDIN_OUTPUT_TO_MIF) {
-			rdma_write_reg_bits(devp->rdma_handle, VDIN_MISC_CTRL,
+			W_VCBUS_BIT(VDIN_MISC_CTRL,
 				1, VDIN0_MIF_ENABLE_BIT, 1);
-			rdma_write_reg_bits(devp->rdma_handle, VDIN_MISC_CTRL,
+			W_VCBUS_BIT(VDIN_MISC_CTRL,
 				1, VDIN0_OUT_MIF_BIT, 1);
-			rdma_write_reg_bits(devp->rdma_handle, VDIN_MISC_CTRL,
+			W_VCBUS_BIT(VDIN_MISC_CTRL,
 				0, VDIN0_OUT_AFBCE_BIT, 1);
 		} else if (sel == VDIN_OUTPUT_TO_AFBCE) {
-			rdma_write_reg_bits(devp->rdma_handle, VDIN_MISC_CTRL,
+			W_VCBUS_BIT(VDIN_MISC_CTRL,
 				1, VDIN0_MIF_ENABLE_BIT, 1);
-			rdma_write_reg_bits(devp->rdma_handle, VDIN_MISC_CTRL,
+			W_VCBUS_BIT(VDIN_MISC_CTRL,
 				0, VDIN0_OUT_MIF_BIT, 1);
-			rdma_write_reg_bits(devp->rdma_handle, VDIN_MISC_CTRL,
+			W_VCBUS_BIT(VDIN_MISC_CTRL,
 				1, VDIN0_OUT_AFBCE_BIT, 1);
 		}
 	} else {
 		if (sel == VDIN_OUTPUT_TO_MIF) {
-			rdma_write_reg_bits(devp->rdma_handle, VDIN_MISC_CTRL,
+			W_VCBUS_BIT(VDIN_MISC_CTRL,
 				1, VDIN1_MIF_ENABLE_BIT, 1);
-			rdma_write_reg_bits(devp->rdma_handle, VDIN_MISC_CTRL,
+			W_VCBUS_BIT(VDIN_MISC_CTRL,
 				1, VDIN1_OUT_MIF_BIT, 1);
-			rdma_write_reg_bits(devp->rdma_handle, VDIN_MISC_CTRL,
+			W_VCBUS_BIT(VDIN_MISC_CTRL,
 				0, VDIN1_OUT_AFBCE_BIT, 1);
 		} else if (sel == VDIN_OUTPUT_TO_AFBCE) {
 			/*sel vdin1 afbce: not support in sw now,
 			 *just reserved interface
 			 */
-			rdma_write_reg_bits(devp->rdma_handle, VDIN_MISC_CTRL,
+			W_VCBUS_BIT(VDIN_MISC_CTRL,
 				1, VDIN1_MIF_ENABLE_BIT, 1);
-			rdma_write_reg_bits(devp->rdma_handle, VDIN_MISC_CTRL,
+			W_VCBUS_BIT(VDIN_MISC_CTRL,
 				0, VDIN1_OUT_MIF_BIT, 1);
-			rdma_write_reg_bits(devp->rdma_handle, VDIN_MISC_CTRL,
+			W_VCBUS_BIT(VDIN_MISC_CTRL,
 				1, VDIN1_OUT_AFBCE_BIT, 1);
 		}
 	}
@@ -408,10 +409,76 @@ static void afbce_wr(uint32_t reg, const uint32_t val)
 	wr(0, reg, val);
 }
 */
+#define VDIN_AFBCE_HOLD_LINE_NUM    4
+void vdin_afbce_update(struct vdin_dev_s *devp)
+{
+	int hold_line_num = VDIN_AFBCE_HOLD_LINE_NUM;
+	int reg_format_mode;/* 0:444 1:422 2:420 */
+	int reg_fmt444_comb;
+	int sblk_num;
+	int uncmp_bits;
+	int uncmp_size;
+
+	if (devp->index != 0) {
+		pr_info("cat not use afbce on vdin1 at the moment\n");
+		return;
+	}
+
+#ifndef CONFIG_AMLOGIC_MEDIA_RDMA
+	pr_info("##############################################\n");
+	pr_info("vdin afbce must use RDMA,but it not be opened\n");
+	pr_info("##############################################\n");
+#endif
+
+	if ((devp->prop.dest_cfmt == TVIN_YUV444) && (devp->h_active > 2048))
+		reg_fmt444_comb = 1;
+	else
+		reg_fmt444_comb = 0;
+
+	if ((devp->prop.dest_cfmt == TVIN_NV12) ||
+		(devp->prop.dest_cfmt == TVIN_NV21)) {
+		reg_format_mode = 2;
+		sblk_num = 12;
+	} else if ((devp->prop.dest_cfmt == TVIN_YUV422) ||
+		(devp->prop.dest_cfmt == TVIN_YUYV422) ||
+		(devp->prop.dest_cfmt == TVIN_YVYU422) ||
+		(devp->prop.dest_cfmt == TVIN_UYVY422) ||
+		(devp->prop.dest_cfmt == TVIN_VYUY422)) {
+		reg_format_mode = 1;
+		sblk_num = 16;
+	} else {
+		reg_format_mode = 0;
+		sblk_num = 24;
+	}
+	uncmp_bits = devp->source_bitdepth;
+
+	/* bit size of uncompression mode */
+	uncmp_size = (((((16*uncmp_bits*sblk_num)+7)>>3)+31)/32)<<1;
+	/*
+	 *pr_info("%s: dest_cfmt=%d, reg_format_mode=%d, uncmp_bits=%d,
+	 *         sblk_num=%d, uncmp_size=%d\n",
+	 *	__func__, devp->prop.dest_cfmt, reg_format_mode,
+	 *	uncmp_bits, sblk_num, uncmp_size);
+	 */
+
+	rdma_write_reg(devp->rdma_handle, AFBCE_MODE,
+		(0 & 0x7) << 29 | (0 & 0x3) << 26 | (3 & 0x3) << 24 |
+		(hold_line_num & 0x7f) << 16 |
+		(2 & 0x3) << 14 | (reg_fmt444_comb & 0x1));
+
+	rdma_write_reg_bits(devp->rdma_handle,
+		AFBCE_MIF_SIZE, (uncmp_size & 0x1fff), 16, 5);/* uncmp_size */
+
+	rdma_write_reg(devp->rdma_handle, AFBCE_FORMAT,
+		(reg_format_mode  & 0x3) << 8 |
+		(uncmp_bits & 0xf) << 4 |
+		(uncmp_bits & 0xf));
+}
+
 void vdin_afbce_config(struct vdin_dev_s *devp)
 {
 	unsigned int offset = devp->addr_offset;
-	int hold_line_num = 4;
+	int hold_line_num = VDIN_AFBCE_HOLD_LINE_NUM;
 	int lbuf_depth = 256;
 	int lossy_luma_en = 0;
 	int lossy_chrm_en = 0;
@@ -580,6 +647,7 @@ void vdin_afbce_maptable_init(struct vdin_dev_s *devp)
 	unsigned int *vtable = NULL;
 	unsigned int body;
 	unsigned int size;
+	void *p = NULL;
 
 	size = roundup(devp->afbce_info->frame_body_size, 4096);
 
@@ -599,19 +667,40 @@ void vdin_afbce_maptable_init(struct vdin_dev_s *devp)
 			else
 				vtable = phys_to_virt(ptable);
 		} else {
-			vtable = (unsigned int *)codec_mm_vmap(
-				ptable,
+			vtable = (unsigned int *)vdin_vmap(ptable,
 				devp->afbce_info->frame_table_size);
+			if (vdin_dbg_en) {
+				pr_err("----vdin vmap v: %p, p: %lx, size: %d\n",
+					vtable, ptable,
+					devp->afbce_info->frame_table_size);
+			}
+			if (!vtable) {
+				pr_err("vmap fail, size: %d.\n",
+					devp->afbce_info->frame_table_size);
+				return;
+			}
+
 		}
 
+		p = vtable;
 		body = devp->afbce_info->fm_body_paddr[i]&0xffffffff;
 		for (j = 0; j < size; j += 4096) {
 			*vtable = ((j + body) >> 12) & 0x000fffff;
 			vtable++;
 		}
 
+		/* clean tail data. */
+		memset(vtable, 0, devp->afbce_info->frame_table_size -
+				((char *)vtable - (char *)p));
+
+		vdin_dma_flush(devp, p,
+			devp->afbce_info->frame_table_size,
+			DMA_TO_DEVICE);
+
 		if (highmem_flag)
-			codec_mm_unmap_phyaddr((void *)vtable);
+			vdin_unmap_phyaddr(p);
+
+		vtable = NULL;
 	}
 }
 
@@ -669,4 +758,11 @@ void vdin_afbce_hw_enable(struct vdin_dev_s *devp)
 {
 	//enable afbce
 	rdma_write_reg_bits(devp->rdma_handle, AFBCE_ENABLE, 1, 8, 1);
+}
+
+void vdin_afbce_soft_reset(void)
+{
+	W_VCBUS_BIT(AFBCE_MODE, 0, 30, 1);
+	W_VCBUS_BIT(AFBCE_MODE, 1, 30, 1);
+	W_VCBUS_BIT(AFBCE_MODE, 0, 30, 1);
 }

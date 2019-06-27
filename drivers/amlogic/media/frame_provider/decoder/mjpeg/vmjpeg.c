@@ -38,6 +38,9 @@
 #include <linux/amlogic/media/codec_mm/configs.h>
 #include <linux/amlogic/tee.h>
 
+#include <trace/events/meson_atrace.h>
+
+
 #ifdef CONFIG_AM_VDEC_MJPEG_LOG
 #define AMLOG
 #define LOG_LEVEL_VAR       amlog_level_vmjpeg
@@ -167,6 +170,7 @@ static irqreturn_t vmjpeg_isr(int irq, void *dev_id)
 	u32 reg, offset, pts, pts_valid = 0;
 	struct vframe_s *vf = NULL;
 	u64 pts_us64;
+	u32 frame_size;
 
 	WRITE_VREG(ASSIST_MBOX1_CLR_REG, 1);
 
@@ -176,7 +180,8 @@ static irqreturn_t vmjpeg_isr(int irq, void *dev_id)
 		offset = READ_VREG(MREG_FRAME_OFFSET);
 
 		if (pts_lookup_offset_us64
-			(PTS_TYPE_VIDEO, offset, &pts, 0, &pts_us64) == 0)
+			(PTS_TYPE_VIDEO, offset, &pts,
+			&frame_size, 0, &pts_us64) == 0)
 			pts_valid = 1;
 
 		if ((reg & PICINFO_INTERLACE) == 0) {
@@ -219,6 +224,7 @@ static irqreturn_t vmjpeg_isr(int irq, void *dev_id)
 			vdec_count_info(gvs, 0, offset);
 
 			kfifo_put(&display_q, (const struct vframe_s *)vf);
+			ATRACE_COUNTER(MODULE_NAME, vf->pts);
 
 			vf_notify_receiver(PROVIDER_NAME,
 					VFRAME_EVENT_PROVIDER_VFRAME_READY,
@@ -276,6 +282,7 @@ static irqreturn_t vmjpeg_isr(int irq, void *dev_id)
 			vfbuf_use[index]++;
 
 			kfifo_put(&display_q, (const struct vframe_s *)vf);
+			ATRACE_COUNTER(MODULE_NAME, vf->pts);
 #else
 			/* send whole frame by weaving top & bottom field */
 #ifdef NV21
@@ -304,6 +311,7 @@ static irqreturn_t vmjpeg_isr(int irq, void *dev_id)
 			vdec_count_info(gvs, 0, offset);
 
 			kfifo_put(&display_q, (const struct vframe_s *)vf);
+			ATRACE_COUNTER(MODULE_NAME, vf->pts);
 
 			vf_notify_receiver(PROVIDER_NAME,
 					VFRAME_EVENT_PROVIDER_VFRAME_READY,

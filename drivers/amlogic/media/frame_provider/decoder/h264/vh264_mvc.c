@@ -891,6 +891,7 @@ static void vh264mvc_isr(void)
 	struct vframe_s *vf;
 	unsigned int pts, pts_valid = 0;
 	u64 pts_us64;
+	u32 frame_size;
 	int ret = READ_VREG(MAILBOX_COMMAND);
 	/* pr_info("vh264mvc_isr, cmd =%x\n", ret); */
 	switch (ret & 0xff) {
@@ -1002,6 +1003,11 @@ static void vh264mvc_isr(void)
 						VF_BUFFER_IDX(display_buff_id));
 
 				} else if (display_view_id == 1) {
+					vf->mem_head_handle =
+					decoder_bmmu_box_get_mem_handle(
+						mm_blk_handle,
+						VF_BUFFER_IDX(display_buff_id));
+
 					vf->mem_handle =
 					decoder_bmmu_box_get_mem_handle(
 						mm_blk_handle,
@@ -1019,6 +1025,7 @@ static void vh264mvc_isr(void)
 				if (pts_lookup_offset_us64
 					(PTS_TYPE_VIDEO,
 					 vfpool_idx[slot].stream_offset, &pts,
+					 &frame_size,
 					 0x10000, &pts_us64) == 0)
 					pts_valid = 1;
 				else
@@ -1375,8 +1382,10 @@ static int vh264mvc_local_init(void)
 		vfpool_idx[i].view1_drop = 0;
 		vfpool_idx[i].used = 0;
 	}
-	for (i = 0; i < VF_POOL_SIZE; i++)
+	for (i = 0; i < VF_POOL_SIZE; i++) {
 		memset(&vfpool[i], 0, sizeof(struct vframe_s));
+		vfpool[i].index = i;
+	}
 	init_vf_buf();
 
 	if (mm_blk_handle) {
@@ -1708,13 +1717,13 @@ module_param(view_mode, uint, 0664);
 MODULE_PARM_DESC(view_mode, "\n amvdec_h264mvc view mode\n");
 
 module_param(dbg_cmd, uint, 0664);
-MODULE_PARM_DESC(dbg_mode, "\n amvdec_h264mvc cmd mode\n");
+MODULE_PARM_DESC(dbg_cmd, "\n amvdec_h264mvc cmd mode\n");
 
 module_param(drop_rate, uint, 0664);
-MODULE_PARM_DESC(dbg_mode, "\n amvdec_h264mvc drop rate\n");
+MODULE_PARM_DESC(drop_rate, "\n amvdec_h264mvc drop rate\n");
 
 module_param(drop_thread_hold, uint, 0664);
-MODULE_PARM_DESC(dbg_mode, "\n amvdec_h264mvc drop thread hold\n");
+MODULE_PARM_DESC(drop_thread_hold, "\n amvdec_h264mvc drop thread hold\n");
 module_init(amvdec_h264mvc_driver_init_module);
 module_exit(amvdec_h264mvc_driver_remove_module);
 

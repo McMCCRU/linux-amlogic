@@ -33,7 +33,6 @@
 #include <linux/cdev.h>
 #include <linux/clk.h>
 #include <linux/of.h>
-#include <linux/of_reserved_mem.h>
 #include <linux/poll.h>
 #include <linux/io.h>
 #include <linux/suspend.h>
@@ -41,9 +40,6 @@
 #include <linux/delay.h>
 #include <linux/of_device.h>
 #include <linux/dma-contiguous.h>
-#include <linux/slab.h>
-#include <linux/dma-mapping.h>
-#include <linux/highmem.h>
 
 
 /* Amlogic headers */
@@ -361,7 +357,7 @@ void hdmirx_dec_close(struct tvin_frontend_s *fe)
 	 *	reset the vdac) to avoid noise issue
 	 */
 	/* For txl,also need to keep bandgap always on:SWPL-1224 */
-	/* if (rx.chip_id == CHIP_ID_TXL) */
+	/* if (rx.hdmirxdev->data->chip_id == CHIP_ID_TXL) */
 		/* vdac_enable(0, 0x10); */
 	/* open_flage = 0; */
 	rx.open_fg = 0;
@@ -596,20 +592,17 @@ void hdmirx_set_timing_info(struct tvin_sig_property_s *prop)
 			prop->he = 128;
 		}
 	}
-	/* bug fix for tl1:under 4k2k50/60hz 10/12bit mode, */
+	/* under 4k2k50/60hz 10/12bit mode, */
 	/* hdmi out clk will overstep the max sample rate of vdin */
 	/* so need discard the last line data to avoid display err */
 	/* 420 : hdmiout clk = pixel clk * 2 */
 	/* 422 : hdmiout clk = pixel clk * colordepth / 8 */
 	/* 444 : hdmiout clk = pixel clk */
-	if (rx.chip_id < CHIP_ID_TL1) {
-		/* tl1 need verify this bug */
-		if ((rx.pre.colordepth > E_COLORDEPTH_8) &&
-			(prop->fps > 49) &&
-			((sig_fmt == TVIN_SIG_FMT_HDMI_4096_2160_00HZ) ||
-			(sig_fmt == TVIN_SIG_FMT_HDMI_3840_2160_00HZ)))
-			prop->ve = 1;
-	}
+	if ((rx.pre.colordepth > E_COLORDEPTH_8) &&
+		(prop->fps > 49) &&
+		((sig_fmt == TVIN_SIG_FMT_HDMI_4096_2160_00HZ) ||
+		(sig_fmt == TVIN_SIG_FMT_HDMI_3840_2160_00HZ)))
+		prop->ve = 1;
 }
 
 /*
@@ -694,7 +687,7 @@ int hdmirx_hw_get_3d_structure(void)
 
 /*
  * hdmirx_get_vsi_info - get vsi info
- * this func is used to get 3D format and dobly
+ * this func is used to get 3D format and dolby
  * vision state of current video
  */
 void hdmirx_get_vsi_info(struct tvin_sig_property_s *prop)
@@ -769,16 +762,6 @@ void hdmirx_get_repetition_info(struct tvin_sig_property_s *prop)
 {
 	prop->decimation_ratio = rx.pre.repeat |
 			HDMI_DE_REPEAT_DONE_FLAG;
-}
-
-/*
- * hdmirx_get_allm_mode - get allm mode
- */
-void hdmirx_get_latency_info(struct tvin_sig_property_s *prop)
-{
-	prop->latency.allm_mode = rx.vs_info_details.allm_mode;
-	prop->latency.it_content = it_content;
-	prop->latency.cn_type = rx.cur.cn_type;
 }
 
 /*
@@ -875,7 +858,6 @@ void hdmirx_get_sig_property(struct tvin_frontend_s *fe,
 	hdmirx_set_timing_info(prop);
 	hdmirx_get_hdr_info(prop);
 	hdmirx_get_vsi_info(prop);
-	hdmirx_get_latency_info(prop);
 	prop->skip_vf_num = vdin_drop_frame_cnt;
 }
 
@@ -1702,7 +1684,7 @@ static void rx_phy_suspend(void)
 		if (hdmi_cec_en != 0) {
 			if (suspend_pddq_sel == 2) {
 				/* set rxsense pulse */
-				rx_phy_rxsense_pulse(10, 10, 0);
+				rx_phy_rxsense_pulse(10, 10);
 			}
 		}
 		/* phy powerdown */
@@ -1718,7 +1700,7 @@ static void rx_phy_resume(void)
 			 * rxsense pulse and phy_int shottern than
 			 * 50ms, SDA may be pulled low 800ms on MTK box
 			 */
-			rx_phy_rxsense_pulse(20, 50, 1);
+			rx_phy_rxsense_pulse(20, 50);
 		}
 	}
 	hdmirx_phy_init();
@@ -1728,14 +1710,9 @@ static void rx_phy_resume(void)
 
 void rx_emp_resource_allocate(struct device *dev)
 {
-	if (rx.chip_id == CHIP_ID_TL1) {
+	if (rx.hdmirxdev->data->chip_id == CHIP_ID_TL1) {
 		/* allocate buffer */
-		if (!rx.empbuff.storeA)
-			rx.empbuff.storeA =
-				kmalloc(EMP_BUFFER_SIZE, GFP_KERNEL);
-		else
-			rx_pr("malloc emp buffer err\n");
-
+		rx.empbuff.storeA = kmalloc(EMP_BUFFER_SIZE, GFP_KERNEL);
 		if (rx.empbuff.storeA)
 			rx.empbuff.storeB =
 				rx.empbuff.storeA + (EMP_BUFFER_SIZE >> 1);
@@ -1750,12 +1727,11 @@ void rx_emp_resource_allocate(struct device *dev)
 					EMP_BUFFER_SIZE >> PAGE_SHIFT, 0);
 		if (rx.empbuff.pg_addr) {
 			/* hw access */
-			/* page to real physical address*/
+			/* page to real address*/
 			rx.empbuff.p_addr_a =
 				page_to_phys(rx.empbuff.pg_addr);
 			rx.empbuff.p_addr_b =
 				rx.empbuff.p_addr_a + (EMP_BUFFER_SIZE >> 1);
-			//page_address
 			rx_pr("buffa paddr=0x%x\n", rx.empbuff.p_addr_a);
 			rx_pr("buffb paddr=0x%x\n", rx.empbuff.p_addr_b);
 		} else {
@@ -1767,187 +1743,32 @@ void rx_emp_resource_allocate(struct device *dev)
 
 void rx_tmds_resource_allocate(struct device *dev)
 {
-	/*uint32_t *src_v_addr;*/
-	/*uint32_t *temp;*/
-	/*uint32_t i, j;*/
-	/*phys_addr_t p_addr;*/
-	/*struct page *pg_addr;*/
-
-	if (rx.chip_id == CHIP_ID_TL1) {
+	if (rx.hdmirxdev->data->chip_id == CHIP_ID_TL1) {
 		if (rx.empbuff.dump_mode == DUMP_MODE_EMP) {
 			if (rx.empbuff.pg_addr) {
 				dma_release_from_contiguous(dev,
 						rx.empbuff.pg_addr,
 						EMP_BUFFER_SIZE >> PAGE_SHIFT);
-				/*free_reserved_area();*/
 				rx.empbuff.pg_addr = 0;
-				rx_pr("release emp data buffer\n");
 			}
 		} else {
-			if (rx.empbuff.pg_addr)
-				dma_release_from_contiguous(dev,
-					rx.empbuff.pg_addr,
+			dma_release_from_contiguous(dev, rx.empbuff.pg_addr,
 					TMDS_BUFFER_SIZE >> PAGE_SHIFT);
 			rx.empbuff.pg_addr = 0;
-			rx_pr("release pre tmds data buffer\n");
 		}
 
-		/* allocate tmds data buffer */
+		/* allocate buffer for tmds to ddr */
 		rx.empbuff.pg_addr =
 				dma_alloc_from_contiguous(dev,
 					TMDS_BUFFER_SIZE >> PAGE_SHIFT, 0);
-
 		if (rx.empbuff.pg_addr)
 			rx.empbuff.p_addr_a =
 				page_to_phys(rx.empbuff.pg_addr);
-		else
-			rx_pr("allocate tmds data buff fail\n");
+
 		rx.empbuff.dump_mode = DUMP_MODE_TMDS;
 		rx_pr("buffa paddr=0x%x\n", rx.empbuff.p_addr_a);
-		#if 0
-		/*clear buffer for test*/
-		for (i = 0; i < 10; i++) {
-			p_addr = rx.empbuff.p_addr_a + i*PAGE_SIZE;
-			pg_addr = phys_to_page(p_addr);
-			dma_sync_single_for_device(hdmirx_dev,
-				p_addr, PAGE_SIZE, DMA_TO_DEVICE);
-			src_v_addr = kmap(pg_addr);
-			/*rx_pr("i:%d,p=0x%x v=0x%x ", i, p_addr, src_v_addr);*/
-			temp = src_v_addr;
-			for (j = 0; j < PAGE_SIZE; ) {
-				*temp = 0x5a010a30 + i;
-				temp++;
-				j += 4;
-				/*rx_pr("%d ", j);*/
-			}
-			flush_kernel_dcache_page(pg_addr);
-			kunmap(pg_addr);
-			/*rx_pr("page end\n");*/
-		}
-		#endif
 	}
 }
-
-/*
- * capture emp pkt data save file emp_data.bin
- *
- */
-void rx_emp_data_capture(void)
-{
-	struct file *filp = NULL;
-	loff_t pos = 0;
-	void *buf = NULL;
-	char *path = "/data/emp_data.bin";
-	unsigned int offset = 0;
-	mm_segment_t old_fs = get_fs();
-
-	set_fs(KERNEL_DS);
-	filp = filp_open(path, O_RDWR|O_CREAT, 0666);
-
-	if (IS_ERR(filp)) {
-		rx_pr("create %s error.\n", path);
-		return;
-	}
-
-	/*start buffer address*/
-	buf = rx.empbuff.ready;
-	/*write size*/
-	offset = rx.empbuff.emppktcnt * 32;
-	vfs_write(filp, buf, offset, &pos);
-	rx_pr("write from 0x%x to 0x%x to %s.\n",
-			0, 0 + offset, path);
-	vfs_fsync(filp, 0);
-	filp_close(filp, NULL);
-	set_fs(old_fs);
-}
-
-/*
- * capture tmds data save file emp_data.bin
- *
- */
-void rx_tmds_data_capture(void)
-{
-	/* data to terminal or save a file */
-	struct file *filp = NULL;
-	loff_t pos = 0;
-	char *path = "/data/tmds_data.bin";
-	unsigned int offset = 0;
-	char *src_v_addr;
-	mm_segment_t old_fs = get_fs();
-	unsigned int recv_pagenum = 0, i, j;
-	unsigned int recv_byte_cnt;
-	struct page *pg_addr;
-	phys_addr_t p_addr;
-	char *tmpbuff;
-	unsigned int *paddr;
-
-	set_fs(KERNEL_DS);
-	filp = filp_open(path, O_RDWR|O_CREAT, 0666);
-
-	if (IS_ERR(filp)) {
-		pr_info("create %s error.\n", path);
-		return;
-	}
-
-	tmpbuff = kmalloc(PAGE_SIZE + 16, GFP_KERNEL);
-	if (!tmpbuff) {
-		rx_pr("tmds malloc buffer err\n");
-		return;
-	}
-	memset(tmpbuff, 0, PAGE_SIZE);
-	recv_byte_cnt = rx.empbuff.tmdspktcnt*4;
-	recv_pagenum = (recv_byte_cnt >> PAGE_SHIFT) + 1;
-
-	rx_pr("total byte:%d page:%d\n", recv_byte_cnt, recv_pagenum);
-	for (i = 0; i < recv_pagenum; i++) {
-		/* one page 4k,tmds data physical address, need map v addr */
-		p_addr = rx.empbuff.p_addr_a + i*PAGE_SIZE;
-		pg_addr = phys_to_page(p_addr);
-		src_v_addr = kmap(pg_addr);
-		dma_sync_single_for_cpu(hdmirx_dev,
-			p_addr, PAGE_SIZE, DMA_TO_DEVICE);
-		pos = i * PAGE_SIZE;
-		if (recv_byte_cnt >= PAGE_SIZE) {
-			offset = PAGE_SIZE;
-			memcpy(tmpbuff, src_v_addr, PAGE_SIZE);
-			vfs_write(filp, tmpbuff, offset, &pos);
-			recv_byte_cnt -= PAGE_SIZE;
-		} else {
-			offset = recv_byte_cnt;
-			memcpy(tmpbuff, src_v_addr, recv_byte_cnt);
-			vfs_write(filp, tmpbuff, offset, &pos);
-			recv_byte_cnt = 0;
-		}
-
-		/* release current page */
-		kunmap(pg_addr);
-	}
-
-	/* for teset */
-	for (i = 0; i < recv_pagenum; i++) {
-		p_addr = rx.empbuff.p_addr_a + i*PAGE_SIZE;
-		pg_addr = phys_to_page(p_addr);
-		/* p addr map to v addr*/
-		paddr = kmap(pg_addr);
-		for (j = 0; j < PAGE_SIZE;) {
-			*paddr = 0xaabbccdd;
-			paddr++;
-			j += 4;
-		}
-		rx_pr(".");
-		dma_sync_single_for_device(hdmirx_dev,
-			p_addr, PAGE_SIZE, DMA_TO_DEVICE);
-		/* release current page */
-		kunmap(pg_addr);
-	}
-
-	kfree(tmpbuff);
-	rx_pr("write to %s\n", path);
-	vfs_fsync(filp, 0);
-	filp_close(filp, NULL);
-	set_fs(old_fs);
-}
-
 
 #ifdef CONFIG_AMLOGIC_LEGACY_EARLY_SUSPEND
 static void hdmirx_early_suspend(struct early_suspend *h)
@@ -2013,7 +1834,7 @@ static int hdmirx_probe(struct platform_device *pdev)
 
 	if (hdevp->data) {
 		rx.chip_id = hdevp->data->chip_id;
-		rx_pr("chip id:%d\n", rx.chip_id);
+		rx_pr("chip id:%d\n", rx.hdmirxdev->data->chip_id);
 		rx_pr("phy ver:%d\n", rx.hdmirxdev->data->phy_ver);
 	} else {
 		/*txlx chip for default*/
@@ -2196,30 +2017,29 @@ static int hdmirx_probe(struct platform_device *pdev)
 		clk_prepare_enable(hdevp->cfg_clk);
 		clk_rate = clk_get_rate(hdevp->cfg_clk);
 	}
-
 	hdcp22_on = rx_is_hdcp22_support();
 	if (hdcp22_on) {
 		hdevp->esm_clk = clk_get(&pdev->dev, "hdcp_rx22_esm");
-		if (IS_ERR(hdevp->esm_clk)) {
+		if (IS_ERR(hdevp->esm_clk))
 			rx_pr("get esm_clk err\n");
-		} else {
+		else {
 			clk_set_parent(hdevp->esm_clk, fclk_div7_clk);
 			clk_set_rate(hdevp->esm_clk, 285714285);
 			clk_prepare_enable(hdevp->esm_clk);
 			clk_rate = clk_get_rate(hdevp->esm_clk);
 		}
 		hdevp->skp_clk = clk_get(&pdev->dev, "hdcp_rx22_skp");
-		if (IS_ERR(hdevp->skp_clk)) {
+		if (IS_ERR(hdevp->skp_clk))
 			rx_pr("get skp_clk err\n");
-		} else {
+		else {
 			clk_set_parent(hdevp->skp_clk, xtal_clk);
 			clk_set_rate(hdevp->skp_clk, 24000000);
 			clk_prepare_enable(hdevp->skp_clk);
 			clk_rate = clk_get_rate(hdevp->skp_clk);
 		}
 	}
-	if ((rx.chip_id == CHIP_ID_TXLX) ||
-		(rx.chip_id == CHIP_ID_TXHD)) {
+	if ((rx.hdmirxdev->data->chip_id == CHIP_ID_TXLX) ||
+		(rx.hdmirxdev->data->chip_id == CHIP_ID_TXHD)) {
 		tmds_clk_fs = clk_get(&pdev->dev, "hdmirx_aud_pll2fs");
 		if (IS_ERR(tmds_clk_fs))
 			rx_pr("get tmds_clk_fs err\n");
@@ -2231,6 +2051,7 @@ static int hdmirx_probe(struct platform_device *pdev)
 			clk_rate = clk_get_rate(hdevp->aud_out_clk);
 		}
 	}
+
 
 	#if 0
 	hdevp->acr_ref_clk = clk_get(&pdev->dev, "hdmirx_acr_ref_clk");
@@ -2244,36 +2065,13 @@ static int hdmirx_probe(struct platform_device *pdev)
 				clk_rate/1000000);
 	}
 	#endif
-	if (rx.chip_id == CHIP_ID_TL1) {
-		/*for audio clk measure*/
-		hdevp->meter_clk = clk_get(&pdev->dev, "cts_hdmirx_meter_clk");
-		if (IS_ERR(hdevp->meter_clk))
-			rx_pr("get cts hdmirx meter clk err\n");
-		else {
-			clk_set_parent(hdevp->meter_clk, xtal_clk);
-			clk_set_rate(hdevp->meter_clk, 24000000);
-			clk_prepare_enable(hdevp->meter_clk);
-			clk_rate = clk_get_rate(hdevp->meter_clk);
-		}
-		/*for emp data to ddr*/
-		hdevp->axi_clk = clk_get(&pdev->dev, "cts_hdmi_axi_clk");
-		if (IS_ERR(hdevp->axi_clk))
-			rx_pr("get cts axi clk err\n");
-		else {
-			clk_set_parent(hdevp->axi_clk, xtal_clk);
-			clk_set_rate(hdevp->axi_clk, 667000000);
-			clk_prepare_enable(hdevp->axi_clk);
-			clk_rate = clk_get_rate(hdevp->axi_clk);
-		}
-	} else {
-		hdevp->audmeas_clk = clk_get(&pdev->dev, "hdmirx_audmeas_clk");
-		if (IS_ERR(hdevp->audmeas_clk))
-			rx_pr("get audmeas_clk err\n");
-		else {
-			clk_set_parent(hdevp->audmeas_clk, fclk_div5_clk);
-			clk_set_rate(hdevp->audmeas_clk, 200000000);
-			clk_rate = clk_get_rate(hdevp->audmeas_clk);
-		}
+	hdevp->audmeas_clk = clk_get(&pdev->dev, "hdmirx_audmeas_clk");
+	if (IS_ERR(hdevp->audmeas_clk))
+		rx_pr("get audmeas_clk err\n");
+	else {
+		clk_set_parent(hdevp->audmeas_clk, fclk_div5_clk);
+		clk_set_rate(hdevp->audmeas_clk, 200000000);
+		clk_rate = clk_get_rate(hdevp->audmeas_clk);
 	}
 
 	pd_fifo_buf = kmalloc_array(1, PFIFO_SIZE * sizeof(uint32_t),
@@ -2323,12 +2121,8 @@ static int hdmirx_probe(struct platform_device *pdev)
 		disable_port_num = disable_port & 0xF;
 	}
 
-	ret = of_reserved_mem_device_init(&(pdev->dev));
-	if (ret != 0)
-		rx_pr("warning: no rev cmd mem\n");
 	rx_emp_resource_allocate(&(pdev->dev));
 	hdmirx_hw_probe();
-	hdmirx_init_params();
 	hdmirx_switch_pinmux(&(pdev->dev));
 #ifdef CONFIG_AMLOGIC_LEGACY_EARLY_SUSPEND
 	register_early_suspend(&hdmirx_early_suspend_handler);
@@ -2450,10 +2244,11 @@ static int aml_hdcp22_pm_notify(struct notifier_block *nb,
 			rx_pr("hdcp22 kill ok!\n");
 		else
 			rx_pr("hdcp22 kill timeout!\n");
-		hdcp_22_off();
+		hdcp22_kill_esm = 0;
+		hdcp22_suspend();
 	} else if ((event == PM_POST_SUSPEND) && hdcp22_on) {
 		rx_pr("PM_POST_SUSPEND\n");
-		hdcp_22_on();
+		hdcp22_resume();
 	}
 	return NOTIFY_OK;
 }
@@ -2504,7 +2299,7 @@ static void hdmirx_shutdown(struct platform_device *pdev)
 	/* phy powerdown */
 	rx_phy_power_on(0);
 	if (hdcp22_on)
-		hdcp_22_off();
+		hdcp22_clk_en(0);
 	rx_pr("[hdmirx]: shutdown success\n");
 }
 
